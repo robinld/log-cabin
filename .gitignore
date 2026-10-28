@@ -2,7 +2,6 @@
 *.tfstate
 *.tfstate.*
 *.tfvars
-infra/.build/
 __pycache__/
 *.pyc
 .venv/

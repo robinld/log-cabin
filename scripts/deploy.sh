@@ -1,10 +1,9 @@
 #!/bin/bash
-# Push code changes: re-zip and upload the app (terraform apply), then tell
-# the box to pull and reinstall it over SSM. No SSH, no open ports.
+# Tell the box to download the latest GitHub release and reinstall it, over
+# SSM. Publish a release first; local edits and unreleased commits on main are
+# not deployed. No SSH, no open ports.
 set -euo pipefail
 cd "$(dirname "$0")/../infra"
-
-terraform apply "$@"
 
 INSTANCE=$(terraform output -raw instance_id)
 REGION=$(terraform output -raw region)

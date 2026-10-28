@@ -34,10 +34,10 @@ variable "daily_snapshots_kept" {
   default     = 14
 }
 
-variable "alert_email" {
-  description = "Email for alerts (instance recovery and reboots). Empty disables the email subscription. You must click the confirmation link AWS sends."
+variable "github_repo" {
+  description = "Public GitHub repo (owner/name) the box downloads its code from."
   type        = string
-  default     = ""
+  default     = "robinld/log-cabin"
 }
 
 variable "yolink_poll_minutes" {

@@ -8,7 +8,7 @@ Aggregate logs across various IoT systems and query them.
 
 | Path | What |
 |---|---|
-| `infra/` | Terraform: instance, data volume + snapshot policy, SNS, SSM secrets, recovery alarms |
+| `infra/` | Terraform: instance, data volume + snapshot policy, SSM secrets |
 | `app/home_events/yolink_ingest.py` | MQTT subscriber plus a periodic `getState` poll that records any change MQTT missed |
 | `app/install.sh` | Idempotent installer the box runs on first boot and on every deploy |
 | `scripts/` | `set-secrets.sh`, `deploy.sh`, `dashboard.sh` |
@@ -20,6 +20,9 @@ Prerequisites: AWS CLI with credentials and the [Session Manager plugin](https:/
 - **YoLink UAC**: in the YoLink app, Account → Advanced Settings → User Access Credentials. You get a UAID and a secret.
 
 ```bash
+# 0. The box deploys the latest GitHub release, so publish one first
+gh release create v0.1.0 --generate-notes
+
 cd infra
 terraform init
 
@@ -28,8 +31,10 @@ terraform apply -target=aws_ssm_parameter.secret
 ../scripts/set-secrets.sh
 
 # 2. Everything else
-terraform apply -var alert_email=you@example.com
-#    then click the confirmation link SNS emails you
+terraform apply
 ```
 
 Run `scripts/dashboard.sh` and open http://localhost:8001 for Datasette.
+
+To ship changes: push, publish a release (`gh release create vX.Y.Z --generate-notes`),
+then run `scripts/deploy.sh`. Pushing to `main` alone deploys nothing.

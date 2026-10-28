@@ -59,53 +59,6 @@ resource "aws_ssm_parameter" "secret" {
   }
 }
 
-# --------------------------------------------------------------- app code ---
-
-resource "random_id" "bucket" {
-  byte_length = 4
-}
-
-# Holds the app bundle only (a few KB), so S3 cost is effectively zero.
-resource "aws_s3_bucket" "artifacts" {
-  bucket        = "${var.name}-artifacts-${random_id.bucket.hex}"
-  force_destroy = true
-}
-
-resource "aws_s3_bucket_public_access_block" "artifacts" {
-  bucket                  = aws_s3_bucket.artifacts.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-data "archive_file" "app" {
-  type        = "zip"
-  source_dir  = "${path.module}/../app"
-  output_path = "${path.module}/.build/app.zip"
-  excludes    = ["**/__pycache__/**", "**/*.pyc", ".venv/**"]
-}
-
-resource "aws_s3_object" "app" {
-  bucket = aws_s3_bucket.artifacts.id
-  key    = "app.zip"
-  source = data.archive_file.app.output_path
-  etag   = data.archive_file.app.output_md5
-}
-
-# ----------------------------------------------------------------- alerts ---
-
-resource "aws_sns_topic" "alerts" {
-  name = "${var.name}-alerts"
-}
-
-resource "aws_sns_topic_subscription" "email" {
-  count     = var.alert_email == "" ? 0 : 1
-  topic_arn = aws_sns_topic.alerts.arn
-  protocol  = "email"
-  endpoint  = var.alert_email
-}
-
 # ------------------------------------------------------------ instance IAM ---
 
 data "aws_iam_policy_document" "ec2_assume" {
@@ -133,12 +86,6 @@ data "aws_iam_policy_document" "box" {
     sid       = "ReadOwnParams"
     actions   = ["ssm:GetParameter", "ssm:GetParameters"]
     resources = ["arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.param_prefix}/*"]
-  }
-
-  statement {
-    sid       = "FetchAppBundle"
-    actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.artifacts.arn}/*"]
   }
 }
 
@@ -189,8 +136,7 @@ resource "aws_instance" "box" {
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
     region         = var.region
     data_volume_id = aws_ebs_volume.data.id
-    bucket         = aws_s3_bucket.artifacts.id
-    app_key        = aws_s3_object.app.key
+    github_repo    = var.github_repo
     param_prefix   = local.param_prefix
     poll_minutes   = var.yolink_poll_minutes
     hostname       = var.name
@@ -233,34 +179,6 @@ resource "aws_volume_attachment" "data" {
   device_name = "/dev/sdf"
   volume_id   = aws_ebs_volume.data.id
   instance_id = aws_instance.box.id
-}
-
-# Auto-recover onto new hardware if AWS's underlying host fails.
-resource "aws_cloudwatch_metric_alarm" "recover" {
-  alarm_name          = "${var.name}-system-check"
-  namespace           = "AWS/EC2"
-  metric_name         = "StatusCheckFailed_System"
-  dimensions          = { InstanceId = aws_instance.box.id }
-  statistic           = "Maximum"
-  period              = 60
-  evaluation_periods  = 2
-  threshold           = 1
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  alarm_actions       = ["arn:aws:automate:${var.region}:ec2:recover", aws_sns_topic.alerts.arn]
-}
-
-# Reboot if the OS itself wedges.
-resource "aws_cloudwatch_metric_alarm" "reboot" {
-  alarm_name          = "${var.name}-instance-check"
-  namespace           = "AWS/EC2"
-  metric_name         = "StatusCheckFailed_Instance"
-  dimensions          = { InstanceId = aws_instance.box.id }
-  statistic           = "Maximum"
-  period              = 60
-  evaluation_periods  = 3
-  threshold           = 1
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  alarm_actions       = ["arn:aws:automate:${var.region}:ec2:reboot", aws_sns_topic.alerts.arn]
 }
 
 # ------------------------------------------------------------- snapshots ---

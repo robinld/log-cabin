@@ -8,8 +8,7 @@ hostnamectl set-hostname ${hostname}
 mkdir -p /etc/home-events
 cat > /etc/home-events/env <<EOF
 AWS_DEFAULT_REGION=${region}
-APP_BUCKET=${bucket}
-APP_KEY=${app_key}
+GITHUB_REPO=${github_repo}
 PARAM_PREFIX=${param_prefix}
 YOLINK_POLL_MINUTES=${poll_minutes}
 DB_PATH=/data/events.db
@@ -36,19 +35,25 @@ grep -q "$UUID" /etc/fstab || echo "UUID=$UUID /data ext4 defaults,nofail 0 2" >
 mount -a
 
 # --- code ------------------------------------------------------------------
+# Deploys the latest published GitHub release, not whatever is on main. The
+# repo is public, so no credentials are needed.
 cat > /usr/local/bin/home-events-update <<'EOF'
 #!/bin/bash
 set -euo pipefail
 set -a; . /etc/home-events/env; set +a
-tmp=$(mktemp -d)
-aws s3 cp "s3://$APP_BUCKET/$APP_KEY" "$tmp/app.zip"
-rm -rf /opt/home-events/src
-mkdir -p /opt/home-events/src
-unzip -q "$tmp/app.zip" -d /opt/home-events/src
-rm -rf "$tmp"
-bash /opt/home-events/src/install.sh
+SRC=/opt/home-events/src
+if ! TAG=$(curl -fsSL "https://api.github.com/repos/$GITHUB_REPO/releases/latest" \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])'); then
+  echo "No published release in $GITHUB_REPO. Create one: gh release create v0.1.0 --generate-notes" >&2
+  exit 1
+fi
+rm -rf "$SRC"
+mkdir -p "$SRC"
+curl -fsSL "https://github.com/$GITHUB_REPO/archive/refs/tags/$TAG.tar.gz" \
+  | tar -xz --strip-components=1 -C "$SRC"
+echo "$TAG" > "$SRC/DEPLOYED_VERSION"
+bash "$SRC/app/install.sh"
 EOF
 chmod 755 /usr/local/bin/home-events-update
 
-dnf install -y unzip
 /usr/local/bin/home-events-update
