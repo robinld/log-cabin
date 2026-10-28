@@ -12,6 +12,7 @@ locals {
     wireguard_conf = "wireguard/conf"
     evl_host       = "evl/host"
     evl_password   = "evl/password"
+    protect_key    = "protect/api_key"
   }
 }
 

@@ -6,7 +6,7 @@ set -euo pipefail
 REGION=${REGION:-us-west-2}
 NAME=${NAME:-log-cabin}
 
-for p in yolink/uaid yolink/secret evl/host evl/password; do
+for p in yolink/uaid yolink/secret evl/host evl/password protect/api_key; do
   read -rsp "/$NAME/$p (blank to skip): " value; echo
   [ -z "$value" ] && continue
   aws ssm put-parameter --region "$REGION" --name "/$NAME/$p" --type SecureString \
