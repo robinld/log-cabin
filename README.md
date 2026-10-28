@@ -18,6 +18,7 @@ Aggregate logs across various IoT systems and query them.
 Prerequisites: AWS CLI with credentials and the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html), Terraform ≥ 1.6, plus:
 
 - **YoLink UAC**: in the YoLink app, Account → Advanced Settings → User Access Credentials. You get a UAID and a secret.
+- **WireGuard client config** (optional, for reaching devices on the home LAN): create a WireGuard VPN server on the UniFi gateway, add a client, and download its `.conf`. Edit its `AllowedIPs` to only the home addresses the box needs (e.g. `192.168.1.10/32`); a full tunnel is refused. `set-secrets.sh` uploads the file. If the home device rejects connections from other subnets, add a UniFi NAT **Masquerade** policy (source: the VPN subnet; destination: the device; interface: the LAN).
 
 ```bash
 # 0. The box deploys the latest GitHub release, so publish one first

@@ -28,6 +28,9 @@ chown -R root:root "$ROOT/app"
 
 sudo -u homeevents env DB_PATH="$DB_PATH" PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.db
 
+# --- WireGuard to the home network (skipped until its secret is set) ------
+PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.wireguard
+
 # --- systemd --------------------------------------------------------------
 install -m 644 "$SRC"/systemd/* /etc/systemd/system/
 systemctl daemon-reload

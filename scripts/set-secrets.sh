@@ -13,3 +13,16 @@ for p in yolink/uaid yolink/secret; do
     --value "$value" --overwrite >/dev/null
   echo "  set"
 done
+
+# The WireGuard client config is uploaded from its file. Its AllowedIPs must
+# list only the home addresses the box needs, not 0.0.0.0/0.
+read -rp "/$NAME/wireguard/conf: path to the client .conf (blank to skip): " conf
+if [ -n "$conf" ]; then
+  if grep -Eq '^[[:space:]]*AllowedIPs[[:space:]]*=.*(0\.0\.0\.0/0|::/0)' "$conf"; then
+    echo "  refused: AllowedIPs is a full tunnel; set it to the home addresses, e.g. 192.168.1.10/32" >&2
+    exit 1
+  fi
+  aws ssm put-parameter --region "$REGION" --name "/$NAME/wireguard/conf" --type SecureString \
+    --value "file://$conf" --overwrite >/dev/null
+  echo "  set"
+fi

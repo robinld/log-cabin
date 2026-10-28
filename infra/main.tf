@@ -7,8 +7,9 @@ locals {
   # Secrets are created with a placeholder and filled in out-of-band with
   # `aws ssm put-parameter --overwrite` so real values never touch state.
   secret_params = {
-    yolink_uaid   = "yolink/uaid"
-    yolink_secret = "yolink/secret"
+    yolink_uaid    = "yolink/uaid"
+    yolink_secret  = "yolink/secret"
+    wireguard_conf = "wireguard/conf"
   }
 }
 
