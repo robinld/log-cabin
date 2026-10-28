@@ -24,8 +24,9 @@ DUMP_EVERY_S = 30
 # The dump replies every 30 s, so this much silence means the session is dead.
 IDLE_TIMEOUT_S = 120
 MIN_BACKOFF_S, MAX_BACKOFF_S = 5, 300
-# The keypad repeats its screen while nothing changes; store a repeat at most
-# this often. Kept under the 45 s gap used by alarm_zone_intervals.
+# The keypad cycles through the same few screens every few seconds; store any
+# given message at most this often. A message not seen in the last 30 s is
+# always stored. Kept under the 45 s gap used by alarm_zone_intervals.
 REPEAT_EVERY_S = 30
 
 
@@ -38,7 +39,7 @@ class Ingest:
         self.conn, self.host, self.password = conn, host, password
         self.connected = False
         self.last_line_at = None
-        self.last_stored = {}  # code -> (data, time stored)
+        self.last_stored = {}  # (code, data) -> time stored
 
     def store(self, line):
         if line.startswith("^"):
@@ -50,12 +51,13 @@ class Ingest:
             code, data = line[:3], line[4:-1]
         else:
             code, data = "?", line  # keep anything unexpected, as sent
-        prev = self.last_stored.get(code)
         now = time.time()
-        if prev and prev[0] == data and now - prev[1] < REPEAT_EVERY_S:
+        if now - self.last_stored.get((code, data), 0) < REPEAT_EVERY_S:
             return
         db.insert_alarm_message(self.conn, code, data)
-        self.last_stored[code] = (data, now)
+        # Forget anything older than the window, so this stays a handful of entries.
+        self.last_stored = {k: t for k, t in self.last_stored.items() if now - t < REPEAT_EVERY_S}
+        self.last_stored[(code, data)] = now
 
     async def readline(self, reader, timeout):
         line = await asyncio.wait_for(reader.readline(), timeout)
