@@ -10,6 +10,7 @@ Aggregate logs across various IoT systems and query them.
 |---|---|
 | `infra/` | Terraform: instance, data volume + snapshot policy, SSM secrets |
 | `app/home_events/yolink_ingest.py` | MQTT subscriber plus a periodic `getState` poll that records any change MQTT missed |
+| `app/home_events/evl_ingest.py` | Read-only EnvisaLink (Honeywell alarm panel) TPI session over the WireGuard tunnel; stores every message raw, and SQL views in `db.py` derive zones, open intervals and troubles |
 | `app/install.sh` | Idempotent installer the box runs on first boot and on every deploy |
 | `scripts/` | `set-secrets.sh`, `deploy.sh`, `dashboard.sh` |
 
@@ -19,6 +20,7 @@ Prerequisites: AWS CLI with credentials and the [Session Manager plugin](https:/
 
 - **YoLink UAC**: in the YoLink app, Account → Advanced Settings → User Access Credentials. You get a UAID and a secret.
 - **WireGuard client config** (optional, for reaching devices on the home LAN): create a WireGuard VPN server on the UniFi gateway, add a client, and download its `.conf`. Edit its `AllowedIPs` to only the home addresses the box needs (e.g. `192.168.1.10/32`); a full tunnel is refused. `set-secrets.sh` uploads the file. If the home device rejects connections from other subnets, add a UniFi NAT **Masquerade** policy (source: the VPN subnet; destination: the device; interface: the LAN).
+- **EnvisaLink** (optional, needs the WireGuard tunnel): its LAN address and TPI password, which is the same as its web login password. `set-secrets.sh` asks for both.
 
 ```bash
 # 0. The box deploys the latest GitHub release, so publish one first

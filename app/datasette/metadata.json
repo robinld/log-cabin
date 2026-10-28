@@ -15,6 +15,10 @@
           "title": "Devices by last event",
           "sql": "select d.name, d.type, max(e.ts) as last_event from devices d left join events e on e.device_id = d.device_id group by d.device_id order by last_event"
         },
+        "alarm_recent": {
+          "title": "Last 200 alarm panel messages (without zone-timer dumps)",
+          "sql": "select received_at, code, data from alarm_messages where code <> '%FF' order by id desc limit 200"
+        },
         "health": {
           "title": "Service heartbeats",
           "sql": "select service, at, detail from heartbeats"

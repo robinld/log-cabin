@@ -1,0 +1,17 @@
+[Unit]
+Description=EnvisaLink alarm panel ingest (read-only)
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/data
+StartLimitIntervalSec=0
+
+[Service]
+User=homeevents
+EnvironmentFile=/etc/home-events/env
+Environment=PYTHONPATH=/opt/home-events/app PYTHONUNBUFFERED=1
+ExecStart=/opt/home-events/venv/bin/python -m home_events.evl_ingest
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

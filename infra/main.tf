@@ -10,6 +10,8 @@ locals {
     yolink_uaid    = "yolink/uaid"
     yolink_secret  = "yolink/secret"
     wireguard_conf = "wireguard/conf"
+    evl_host       = "evl/host"
+    evl_password   = "evl/password"
   }
 }
 
