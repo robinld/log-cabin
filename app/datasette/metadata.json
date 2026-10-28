@@ -1,0 +1,25 @@
+{
+  "title": "Home events",
+  "databases": {
+    "events": {
+      "queries": {
+        "recent": {
+          "title": "Last 200 events",
+          "sql": "select ts, source, event_type, device_name, summary from events order by ts desc limit 200"
+        },
+        "per_device_per_day": {
+          "title": "Events per device per day (last 30 days)",
+          "sql": "select date(ts) as day, coalesce(device_name, device_id) as device, count(*) as n from events where ts >= date('now', '-30 days') group by day, device order by day desc, n desc"
+        },
+        "silent_devices": {
+          "title": "Devices by last event",
+          "sql": "select d.name, d.type, max(e.ts) as last_event from devices d left join events e on e.device_id = d.device_id group by d.device_id order by last_event"
+        },
+        "health": {
+          "title": "Service heartbeats",
+          "sql": "select service, at, detail from heartbeats"
+        }
+      }
+    }
+  }
+}

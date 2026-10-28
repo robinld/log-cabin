@@ -1,0 +1,17 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+infra/.build/
+__pycache__/
+*.pyc
+.venv/
+
+# Site-specific notes kept off GitHub
+HANDOFF.md
+HANDOFF.local.md
+scripts/evl_*.py
+
+# Local copies of house data
+*.db
+*.sqlite

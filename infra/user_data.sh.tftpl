@@ -1,0 +1,54 @@
+#!/bin/bash
+# First-boot bootstrap. Runs once via cloud-init. Later code updates go
+# through /usr/local/bin/home-events-update (see scripts/deploy.sh).
+set -euxo pipefail
+
+hostnamectl set-hostname ${hostname}
+
+mkdir -p /etc/home-events
+cat > /etc/home-events/env <<EOF
+AWS_DEFAULT_REGION=${region}
+APP_BUCKET=${bucket}
+APP_KEY=${app_key}
+PARAM_PREFIX=${param_prefix}
+YOLINK_POLL_MINUTES=${poll_minutes}
+DB_PATH=/data/events.db
+EOF
+
+# --- data volume -----------------------------------------------------------
+# On Nitro instances the EBS volume shows up as NVMe; the by-id link carries
+# the volume ID without its dash. The attachment can land after boot starts.
+VOL=$(echo "${data_volume_id}" | tr -d -)
+DEV=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_$VOL
+for _ in $(seq 1 120); do
+  [ -e "$DEV" ] && break
+  sleep 5
+done
+[ -e "$DEV" ]
+
+# Only format a blank volume. A restored snapshot already has a filesystem.
+if ! blkid "$DEV"; then
+  mkfs.ext4 -L home-data "$DEV"
+fi
+mkdir -p /data
+UUID=$(blkid -s UUID -o value "$DEV")
+grep -q "$UUID" /etc/fstab || echo "UUID=$UUID /data ext4 defaults,nofail 0 2" >> /etc/fstab
+mount -a
+
+# --- code ------------------------------------------------------------------
+cat > /usr/local/bin/home-events-update <<'EOF'
+#!/bin/bash
+set -euo pipefail
+set -a; . /etc/home-events/env; set +a
+tmp=$(mktemp -d)
+aws s3 cp "s3://$APP_BUCKET/$APP_KEY" "$tmp/app.zip"
+rm -rf /opt/home-events/src
+mkdir -p /opt/home-events/src
+unzip -q "$tmp/app.zip" -d /opt/home-events/src
+rm -rf "$tmp"
+bash /opt/home-events/src/install.sh
+EOF
+chmod 755 /usr/local/bin/home-events-update
+
+dnf install -y unzip
+/usr/local/bin/home-events-update
