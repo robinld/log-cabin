@@ -41,4 +41,22 @@ for unit in home-events-yolink home-events-evl home-events-unifi home-events-lut
   systemctl restart "$unit.service"
 done
 
+# --- SSM agent on its IPv6 endpoints --------------------------------------
+# Shell access and deploys then work with the WireGuard tunnel down, even when
+# the tunnel carries all of the box's IPv4. The restart waits until this
+# script, itself usually run by the agent, has finished.
+if python3 - <<'PY_EOF'
+import json, os, sys
+d = "/etc/amazon/ssm/"
+path = d + "amazon-ssm-agent.json"
+cfg = json.load(open(path if os.path.exists(path) else d + "amazon-ssm-agent.json.template"))
+if cfg["Agent"].get("UseDualStackEndpoint") is True:
+    sys.exit(1)
+cfg["Agent"]["UseDualStackEndpoint"] = True
+json.dump(cfg, open(path, "w"), indent=4)
+PY_EOF
+then
+  systemd-run --on-active=30 systemctl restart amazon-ssm-agent.service
+fi
+
 echo "install complete"

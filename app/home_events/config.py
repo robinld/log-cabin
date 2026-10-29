@@ -2,16 +2,22 @@ import logging
 import os
 
 import boto3
+from botocore.config import Config
 
 _ssm = None
 
 
-def param(name):
-    """Read a SecureString from SSM under PARAM_PREFIX. Fails loudly if unset."""
+def ssm():
+    """The SSM client, on its IPv6 endpoint so it works with the tunnel down."""
     global _ssm
     if _ssm is None:
-        _ssm = boto3.client("ssm")
-    value = _ssm.get_parameter(
+        _ssm = boto3.client("ssm", config=Config(use_dualstack_endpoint=True))
+    return _ssm
+
+
+def param(name):
+    """Read a SecureString from SSM under PARAM_PREFIX. Fails loudly if unset."""
+    value = ssm().get_parameter(
         Name=f"{os.environ['PARAM_PREFIX']}/{name}", WithDecryption=True
     )["Parameter"]["Value"]
     if value == "CHANGE_ME":

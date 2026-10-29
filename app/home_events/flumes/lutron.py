@@ -151,13 +151,12 @@ class Flume:
 
 async def pair():
     """Pair with the bridge (press its button now) and store the cert in SSM."""
-    import boto3
     from pylutron_caseta.pairing import async_pair
 
     host = config.param("lutron/host")
     print(f"Pairing with {host}: press the small button on the back of the bridge now.", flush=True)
     data = await async_pair(host)
-    boto3.client("ssm").put_parameter(
+    config.ssm().put_parameter(
         Name=f"{os.environ['PARAM_PREFIX']}/lutron/certs", Type="SecureString",
         Value=json.dumps({k: data[k] for k in ("key", "cert", "ca")}), Overwrite=True)
     print(f"Paired; bridge runs LEAP {data['version']}. Certificate stored in SSM lutron/certs.")

@@ -14,12 +14,14 @@ for p in yolink/uaid yolink/secret evl/host evl/password protect/api_key lutron/
   echo "  set"
 done
 
-# The WireGuard client config is uploaded from its file. Its AllowedIPs must
-# list only the home addresses the box needs, not 0.0.0.0/0.
+# The WireGuard client config is uploaded from its file. Its AllowedIPs is the
+# home addresses the box needs, or 0.0.0.0/0 to send all its IPv4 through the
+# house, which needs an IPv6 Endpoint. The box ignores ::/0.
 read -rp "/$NAME/wireguard/conf: path to the client .conf (blank to skip): " conf
 if [ -n "$conf" ]; then
-  if grep -Eq '^[[:space:]]*AllowedIPs[[:space:]]*=.*(0\.0\.0\.0/0|::/0)' "$conf"; then
-    echo "  refused: AllowedIPs is a full tunnel; set it to the home addresses, e.g. 192.168.1.10/32" >&2
+  if grep -Eq '^[[:space:]]*AllowedIPs[[:space:]]*=.*0\.0\.0\.0/0' "$conf" &&
+     ! grep -Eq '^[[:space:]]*Endpoint[[:space:]]*=[[:space:]]*\[' "$conf"; then
+    echo "  refused: AllowedIPs sends all IPv4 through the tunnel, so Endpoint must be IPv6, e.g. [2001:db8::1]:51820" >&2
     exit 1
   fi
   aws ssm put-parameter --region "$REGION" --name "/$NAME/wireguard/conf" --type SecureString \

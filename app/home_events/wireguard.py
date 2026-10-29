@@ -1,9 +1,13 @@
 """Bring up the WireGuard tunnel to the home network, if one is configured.
 
 The client config (as downloaded from the UniFi WireGuard VPN server) lives in
-SSM at <PARAM_PREFIX>/wireguard/conf. Its AllowedIPs must list only the home
-addresses the box needs, e.g. the EnvisaLink's /32; a full tunnel would send
-SSM, YoLink and everything else through the house, so it is refused.
+SSM at <PARAM_PREFIX>/wireguard/conf. Its AllowedIPs is either the home
+addresses the box needs, e.g. 192.168.1.0/24, or 0.0.0.0/0 to send all of the
+box's IPv4 through the house. That lets the box run without a public IPv4
+address: GitHub and YoLink's cloud have no IPv6, but SSM and package repos do,
+so IPv6 stays on the box's own connection. A full IPv4 tunnel therefore needs
+an IPv6 Endpoint (an IPv4 one would route the tunnel into itself), and ::/0 is
+dropped from AllowedIPs, as the UniFi download includes it.
 
 The tunnel is run by systemd-networkd, which Amazon Linux 2023 already uses,
 so no extra packages are needed. Run as root from install.sh; safe to re-run.
@@ -22,7 +26,12 @@ log = logging.getLogger("wireguard")
 IFACE = "wg0"
 NETDEV = Path(f"/etc/systemd/network/50-{IFACE}.netdev")
 NETWORK = Path(f"/etc/systemd/network/50-{IFACE}.network")
-FULL_TUNNEL = {"0.0.0.0/0", "::/0"}
+# AWS's link-local services (instance metadata and credentials, DNS, time)
+# must stay on the box's own interface when the tunnel takes the IPv4 default
+# route. A drop-in for the network file amazon-ec2-net-utils generates.
+UPLINK = "ens5"
+UPLINK_DROPIN = Path(f"/etc/systemd/network/70-{UPLINK}.network.d/50-aws-link-local.conf")
+UPLINK_ROUTES = "[Route]\nDestination=169.254.169.0/24\nGateway=_dhcp4\n"
 
 
 def parse(text):
@@ -31,8 +40,11 @@ def parse(text):
     cp.read_string(text)
     iface, peer = cp["Interface"], cp["Peer"]
     allowed = [a.strip() for a in peer["AllowedIPs"].split(",") if a.strip()]
-    if FULL_TUNNEL & set(allowed):
-        raise SystemExit("wireguard/conf has a full-tunnel AllowedIPs; list only home addresses, e.g. 192.168.1.10/32")
+    if "::/0" in allowed:
+        log.info("ignoring ::/0 in AllowedIPs; IPv6 uses the box's own connection")
+        allowed.remove("::/0")
+    if "0.0.0.0/0" in allowed and not peer["Endpoint"].startswith("["):
+        raise SystemExit("wireguard/conf sends all IPv4 through the tunnel, so its Endpoint must be IPv6, e.g. [2001:db8::1]:51820")
     return {
         "private_key": iface["PrivateKey"],
         "addresses": [a.strip() for a in iface["Address"].split(",") if a.strip()],
@@ -85,6 +97,8 @@ def main():
     # The netdev holds the private key; systemd-networkd reads it as its group.
     changed = write_if_changed(NETDEV, netdev, 0o640, "systemd-network")
     changed |= write_if_changed(NETWORK, network, 0o644, "root")
+    UPLINK_DROPIN.parent.mkdir(exist_ok=True)
+    changed |= write_if_changed(UPLINK_DROPIN, UPLINK_ROUTES, 0o644, "root")
     if changed:
         # networkd won't reconfigure an existing WireGuard netdev on reload.
         subprocess.run(["ip", "link", "delete", IFACE], check=False, capture_output=True)
