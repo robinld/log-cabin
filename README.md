@@ -47,7 +47,7 @@ terraform apply
 
 Run `scripts/dashboard.sh` and open http://localhost:8001 for Datasette. With the WireGuard tunnel up, it's also at `http://<box's VPN address>:8001` from the home LAN, with no login: anyone on that network can read the log.
 
-**Tailscale** (optional): the box runs `tailscaled`, so chosen devices on your tailnet (a phone, or an assistant such as Muse through its Tailscale connector) can reach Datasette without a public endpoint. Sign a new box in once, as root over SSM: `tailscale up --hostname=log-cabin --accept-dns=false`, then open the link it prints. A replacement box needs signing in again. New tailnets allow every device to reach every port, so add an access rule that lets assistants reach only `log-cabin:8001`; port 5514 accepts UniFi log lines from anyone who can reach it.
+**Tailscale** (optional): the box runs `tailscaled`, so chosen devices on your tailnet (a phone, or an assistant such as Muse through its Tailscale connector) can reach Datasette without a public endpoint. Sign a new box in once, as root over SSM: `tailscale up --hostname=log-cabin --accept-dns=false`, then open the link it prints, then `tailscale serve --bg 8001` to publish Datasette at `https://log-cabin.<tailnet>.ts.net` with a real certificate (enable Serve for the tailnet when it asks). A replacement box needs both steps again. New tailnets allow every device to reach every port, so add an access rule, like the one in `infra/tailscale-policy.hujson`, that lets assistants reach only `log-cabin:443`; port 5514 accepts UniFi log lines from anyone who can reach it.
 
 To ship changes: push, publish a release (`gh release create vX.Y.Z --generate-notes`),
 then run `scripts/deploy.sh`. Pushing to `main` alone deploys nothing.

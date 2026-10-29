@@ -12,13 +12,14 @@
   },
 
   "grants": [
-    // Your own devices can reach each other, and Datasette on the box.
+    // Your own devices can reach each other, and Datasette on the box:
+    // https://log-cabin.<tailnet>.ts.net (Tailscale Serve, port 443).
     {"src": ["autogroup:member"], "dst": ["autogroup:self"], "ip": ["*"]},
-    {"src": ["autogroup:member"], "dst": ["tag:log-cabin"], "ip": ["tcp:8001"]},
+    {"src": ["autogroup:member"], "dst": ["tag:log-cabin"], "ip": ["tcp:443"]},
 
     // Assistants get Datasette (read-only) and nothing else: not the UniFi
     // log listener (5514), not your other devices.
-    {"src": ["tag:assistant"], "dst": ["tag:log-cabin"], "ip": ["tcp:8001"]},
+    {"src": ["tag:assistant"], "dst": ["tag:log-cabin"], "ip": ["tcp:443"]},
   ],
 
   "ssh": [],
