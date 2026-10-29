@@ -241,7 +241,7 @@ data "aws_subnet" "box" {
 }
 
 resource "aws_volume_attachment" "data" {
-  device_name = "/dev/sdf"
+  device_name = "/dev/sdg"
   volume_id   = aws_ebs_volume.data.id
   instance_id = aws_instance.box.id
 }

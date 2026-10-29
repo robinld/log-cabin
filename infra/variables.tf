@@ -19,7 +19,7 @@ variable "instance_type" {
 variable "data_volume_gb" {
   description = "Size of the gp3 volume holding the SQLite database."
   type        = number
-  default     = 8
+  default     = 2
 }
 
 variable "hourly_snapshots_kept" {
