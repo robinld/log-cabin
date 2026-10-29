@@ -1,0 +1,25 @@
+// Tailnet access policy for log-cabin. Not applied automatically: paste it
+// into the Tailscale admin console (Access controls), merging with any rules
+// you already have.
+//
+// Tag the box "tag:log-cabin" and each assistant's device (e.g. Muse's)
+// "tag:assistant" in the admin console (Machines -> ... -> Edit ACL tags).
+// Until an assistant's device is tagged it counts as one of your own devices.
+{
+  "tagOwners": {
+    "tag:log-cabin": ["autogroup:admin"],
+    "tag:assistant": ["autogroup:admin"],
+  },
+
+  "grants": [
+    // Your own devices can reach each other, and Datasette on the box.
+    {"src": ["autogroup:member"], "dst": ["autogroup:self"], "ip": ["*"]},
+    {"src": ["autogroup:member"], "dst": ["tag:log-cabin"], "ip": ["tcp:8001"]},
+
+    // Assistants get Datasette (read-only) and nothing else: not the UniFi
+    // log listener (5514), not your other devices.
+    {"src": ["tag:assistant"], "dst": ["tag:log-cabin"], "ip": ["tcp:8001"]},
+  ],
+
+  "ssh": [],
+}
