@@ -11,12 +11,15 @@ dropped from AllowedIPs, as the UniFi download includes it.
 
 The tunnel is run by systemd-networkd, which Amazon Linux 2023 already uses,
 so no extra packages are needed. Run as root from install.sh; safe to re-run.
+At first boot the bootstrap runs it with "-" and the config on stdin, since
+the tunnel has to be up before the rest of the code can be fetched.
 """
 import configparser
 import grp
 import logging
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from home_events import config
@@ -88,11 +91,14 @@ def write_if_changed(path, text, mode, group):
 
 def main():
     config.setup_logging()
-    try:
-        text = config.param("wireguard/conf")
-    except SystemExit as e:
-        log.warning("skipping WireGuard: %s", e)
-        return
+    if sys.argv[1:] == ["-"]:
+        text = sys.stdin.read()
+    else:
+        try:
+            text = config.param("wireguard/conf")
+        except SystemExit as e:
+            log.warning("skipping WireGuard: %s", e)
+            return
     netdev, network = render(parse(text))
     # The netdev holds the private key; systemd-networkd reads it as its group.
     changed = write_if_changed(NETDEV, netdev, 0o640, "systemd-network")

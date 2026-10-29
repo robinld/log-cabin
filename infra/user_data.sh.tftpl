@@ -1,6 +1,10 @@
 #!/bin/bash
 # First-boot bootstrap. Runs once via cloud-init. Later code updates go
 # through /usr/local/bin/home-events-update (see scripts/deploy.sh).
+#
+# The box has no public IPv4 address. IPv6 reaches SSM, the package repos and
+# raw.githubusercontent.com directly, so the SSM agent and the WireGuard tunnel
+# come up first; GitHub, which is IPv4-only, is then reached through the house.
 set -euxo pipefail
 
 hostnamectl set-hostname ${hostname}
@@ -13,6 +17,23 @@ PARAM_PREFIX=${param_prefix}
 YOLINK_POLL_MINUTES=${poll_minutes}
 DB_PATH=/data/events.db
 EOF
+
+# --- IPv6 and the SSM agent ------------------------------------------------
+# The IPv6 default route arrives by router advertisement, a little after boot.
+for _ in $(seq 1 60); do
+  ip -6 route show default | grep -q . && break
+  sleep 2
+done
+# The minimal AMI leaves out the SSM agent, which is the only way in.
+dnf install -y amazon-ssm-agent wireguard-tools
+python3 - <<'EOF'
+import json
+d = "/etc/amazon/ssm/"
+cfg = json.load(open(d + "amazon-ssm-agent.json.template"))
+cfg["Agent"]["UseDualStackEndpoint"] = True
+json.dump(cfg, open(d + "amazon-ssm-agent.json", "w"), indent=4)
+EOF
+systemctl enable --now amazon-ssm-agent
 
 # --- data volume -----------------------------------------------------------
 # On Nitro instances the EBS volume shows up as NVMe; the by-id link carries
@@ -33,6 +54,23 @@ mkdir -p /data
 UUID=$(blkid -s UUID -o value "$DEV")
 grep -q "$UUID" /etc/fstab || echo "UUID=$UUID /data ext4 defaults,nofail 0 2" >> /etc/fstab
 mount -a
+
+# --- WireGuard tunnel ------------------------------------------------------
+# wireguard.py comes from main, not a release: finding the latest release
+# needs the GitHub API, which is IPv4-only. The release's own copy re-checks
+# the tunnel when install.sh runs.
+mkdir -p /run/bootstrap/home_events
+for f in __init__.py config.py wireguard.py; do
+  curl -fsSL --retry 5 -o /run/bootstrap/home_events/$f \
+    "https://raw.githubusercontent.com/${github_repo}/main/app/home_events/$f"
+done
+AWS_USE_DUALSTACK_ENDPOINT=true aws ssm get-parameter --region ${region} \
+    --name ${param_prefix}/wireguard/conf --with-decryption --query Parameter.Value --output text \
+  | PYTHONPATH=/run/bootstrap python3 -m home_events.wireguard -
+for _ in $(seq 1 60); do
+  curl -4 -fsS -m 5 -o /dev/null https://api.github.com && break
+  sleep 5
+done
 
 # --- code ------------------------------------------------------------------
 # Deploys the latest published GitHub release, not whatever is on main. The

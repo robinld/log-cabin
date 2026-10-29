@@ -1,9 +1,6 @@
 import logging
 import os
 
-import boto3
-from botocore.config import Config
-
 _ssm = None
 
 
@@ -11,6 +8,9 @@ def ssm():
     """The SSM client, on its IPv6 endpoint so it works with the tunnel down."""
     global _ssm
     if _ssm is None:
+        # Imported here so wireguard.py can run at first boot, before boto3 is.
+        import boto3
+        from botocore.config import Config
         _ssm = boto3.client("ssm", config=Config(use_dualstack_endpoint=True))
     return _ssm
 

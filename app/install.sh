@@ -11,7 +11,7 @@ PY=python3.11
 
 
 # --- OS packages and service user -----------------------------------------
-dnf install -y "$PY" "$PY-pip" sqlite
+dnf install -y "$PY" "$PY-pip" sqlite amazon-ssm-agent wireguard-tools
 id homeevents >/dev/null 2>&1 || useradd --system --home-dir "$ROOT" --shell /sbin/nologin homeevents
 mountpoint -q /data
 chown homeevents:homeevents /data

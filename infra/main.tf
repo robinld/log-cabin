@@ -162,8 +162,10 @@ resource "aws_iam_instance_profile" "box" {
 
 # --------------------------------------------------------------- instance ---
 
+# The minimal image fits a 3 GB root disk (the standard one needs 8 GB); the
+# bootstrap installs what it leaves out that the box needs.
 data "aws_ssm_parameter" "al2023_arm64" {
-  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-minimal-kernel-default-arm64"
 }
 
 resource "aws_instance" "box" {
@@ -173,13 +175,10 @@ resource "aws_instance" "box" {
   vpc_security_group_ids = [aws_security_group.box.id]
   iam_instance_profile   = aws_iam_instance_profile.box.name
 
-  # A new box needs a public IPv4 to bootstrap: it has no tunnel yet, and
-  # GitHub has no IPv6. Once the WireGuard tunnel carries all IPv4 out through
-  # the house, remove it (~$3.60/mo) in place, which ignore_changes allows:
-  #   aws ec2 modify-network-interface-attribute --no-associate-public-ip-address \
-  #     --network-interface-id <the box's primary ENI>
-  # Changing this setting here would replace the instance.
-  associate_public_ip_address = true
+  # No public IPv4 (~$3.60/mo). IPv6 goes out directly, and the WireGuard
+  # tunnel, which the bootstrap brings up first, carries IPv4 out through the
+  # house. The security group still allows no inbound traffic.
+  associate_public_ip_address = false
   ipv6_address_count          = 1
 
   # "unlimited" (the T4g default) bills surplus CPU credits; "standard" just
@@ -194,7 +193,7 @@ resource "aws_instance" "box" {
 
   root_block_device {
     volume_type = "gp3"
-    volume_size = 8
+    volume_size = 3
     encrypted   = true
   }
 
@@ -214,7 +213,7 @@ resource "aws_instance" "box" {
   # The root volume is disposable; new AMIs or bootstrap edits should not
   # silently replace the box. Code updates go through scripts/deploy.sh.
   lifecycle {
-    ignore_changes = [ami, user_data, associate_public_ip_address]
+    ignore_changes = [ami, user_data]
   }
 }
 
