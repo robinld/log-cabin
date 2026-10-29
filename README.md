@@ -24,7 +24,7 @@ Aggregate logs across various IoT systems and query them.
 Prerequisites: AWS CLI with credentials and the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html), Terraform ≥ 1.6, plus:
 
 - **YoLink UAC**: in the YoLink app, Account → Advanced Settings → User Access Credentials. You get a UAID and a secret.
-- **WireGuard client config** (optional, for reaching devices on the home LAN): create a WireGuard VPN server on the UniFi gateway, add a client, and download its `.conf`. Edit its `AllowedIPs` to the home LAN (e.g. `192.168.1.0/24`), or set it to `0.0.0.0/0` to send all of the box's IPv4 through the house so it needs no public IPv4 address. A full IPv4 tunnel needs the gateway's IPv6 address as `Endpoint`; IPv6 (SSM, package repos) stays on the box's own connection, and `::/0` is ignored. `set-secrets.sh` uploads the file. If the home device rejects connections from other subnets, add a UniFi NAT **Masquerade** policy (source: the VPN subnet; destination: the device; interface: the LAN).
+- **WireGuard client config** (required): the box has no public IPv4 address, so this tunnel carries all of its IPv4, including the GitHub download at first boot, out through the house. Create a WireGuard VPN server on the UniFi gateway, add a client, and download its `.conf`. Keep `AllowedIPs = 0.0.0.0/0` and set `Endpoint` to the gateway's IPv6 address; IPv6 (SSM, package repos) stays on the box's own connection, and `::/0` is ignored. `set-secrets.sh` uploads the file. If the home device rejects connections from other subnets, add a UniFi NAT **Masquerade** policy (source: the VPN subnet; destination: the device; interface: the LAN).
 - **EnvisaLink** (optional, needs the WireGuard tunnel): its LAN address and TPI password, which is the same as its web login password. `set-secrets.sh` asks for both.
 - **UniFi SIEM logs** (optional, needs the WireGuard tunnel, with the gateway's VPN address in `AllowedIPs`): in UniFi, Settings → Control Plane → Integrations → Activity Logging → SIEM Server, pointed at the box's VPN address, port 5514.
 - **Lutron Caseta** (optional, needs the WireGuard tunnel): set `lutron/host` to the Smart Bridge's LAN address, deploy, then pair once while someone presses the button on the back of the bridge: run `python -m home_events.flumes.lutron pair` on the box (as root, with `/etc/home-events/env` loaded). It stores the certificate in SSM itself.
@@ -46,6 +46,8 @@ terraform apply
 ```
 
 Run `scripts/dashboard.sh` and open http://localhost:8001 for Datasette. With the WireGuard tunnel up, it's also at `http://<box's VPN address>:8001` from the home LAN, with no login: anyone on that network can read the log.
+
+**Tailscale** (optional): the box runs `tailscaled`, so chosen devices on your tailnet (a phone, or an assistant such as Muse through its Tailscale connector) can reach Datasette without a public endpoint. Sign a new box in once, as root over SSM: `tailscale up --hostname=log-cabin --accept-dns=false`, then open the link it prints. A replacement box needs signing in again. New tailnets allow every device to reach every port, so add an access rule that lets assistants reach only `log-cabin:8001`; port 5514 accepts UniFi log lines from anyone who can reach it.
 
 To ship changes: push, publish a release (`gh release create vX.Y.Z --generate-notes`),
 then run `scripts/deploy.sh`. Pushing to `main` alone deploys nothing.

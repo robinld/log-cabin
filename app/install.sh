@@ -19,6 +19,17 @@ chown homeevents:homeevents /data
 # wrote the database, so own the database files too, not just the directory.
 find /data -maxdepth 1 -name 'events.db*' -exec chown homeevents:homeevents {} +
 
+# --- Tailscale --------------------------------------------------------------
+# Lets chosen tailnet devices (an assistant, a phone) reach Datasette; the
+# tailnet's access rules decide which ports each may use. Signing the box in
+# is a manual, one-time step per box; see the README.
+[ -f /etc/yum.repos.d/tailscale.repo ] ||
+  dnf config-manager --add-repo https://pkgs.tailscale.com/stable/amazon-linux/2023/tailscale.repo
+dnf install -y tailscale
+systemctl enable --now tailscaled.service
+# SSM is the only way in, so nothing needs SSH listening.
+systemctl disable --now sshd.service 2>/dev/null || true
+
 # --- Python ---------------------------------------------------------------
 [ -x "$VENV/bin/python" ] || "$PY" -m venv "$VENV"
 "$VENV/bin/pip" install --quiet --upgrade pip
