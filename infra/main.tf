@@ -173,8 +173,12 @@ resource "aws_instance" "box" {
   vpc_security_group_ids = [aws_security_group.box.id]
   iam_instance_profile   = aws_iam_instance_profile.box.name
 
-  # No NAT gateway (~$33/mo), so the box needs a public IPv4 for egress
-  # (~$3.60/mo). The security group still allows no inbound traffic.
+  # A new box needs a public IPv4 to bootstrap: it has no tunnel yet, and
+  # GitHub has no IPv6. Once the WireGuard tunnel carries all IPv4 out through
+  # the house, remove it (~$3.60/mo) in place, which ignore_changes allows:
+  #   aws ec2 modify-network-interface-attribute --no-associate-public-ip-address \
+  #     --network-interface-id <the box's primary ENI>
+  # Changing this setting here would replace the instance.
   associate_public_ip_address = true
   ipv6_address_count          = 1
 
@@ -210,7 +214,7 @@ resource "aws_instance" "box" {
   # The root volume is disposable; new AMIs or bootstrap edits should not
   # silently replace the box. Code updates go through scripts/deploy.sh.
   lifecycle {
-    ignore_changes = [ami, user_data]
+    ignore_changes = [ami, user_data, associate_public_ip_address]
   }
 }
 
