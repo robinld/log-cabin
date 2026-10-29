@@ -27,7 +27,7 @@ cp -r "$SRC/home_events" "$SRC/datasette" "$ROOT/app/"
 chown -R root:root "$ROOT/app"
 
 # Stop the writers first, so a schema migration never races old code.
-systemctl stop home-events-yolink.service home-events-evl.service 2>/dev/null || true
+systemctl stop home-events-yolink.service home-events-evl.service home-events-unifi.service 2>/dev/null || true
 sudo -u homeevents env DB_PATH="$DB_PATH" PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.db
 
 # --- WireGuard to the home network (skipped until its secret is set) ------
@@ -36,7 +36,7 @@ PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.wireguard
 # --- systemd --------------------------------------------------------------
 install -m 644 "$SRC"/systemd/* /etc/systemd/system/
 systemctl daemon-reload
-for unit in home-events-yolink home-events-evl home-events-datasette; do
+for unit in home-events-yolink home-events-evl home-events-unifi home-events-datasette; do
   systemctl enable "$unit.service"
   systemctl restart "$unit.service"
 done

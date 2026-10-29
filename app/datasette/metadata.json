@@ -19,6 +19,10 @@
           "title": "Last 200 alarm panel messages (without zone-timer dumps)",
           "sql": "select received_at, event_type, event_name, device_id, body from log where source = 'evl' and event_type <> 'zone_timers' order by id desc limit 200"
         },
+        "unifi_recent": {
+          "title": "Last 200 UniFi syslog events",
+          "sql": "select received_at, event_type, event_name, body from log where source = 'unifi' order by id desc limit 200"
+        },
         "health": {
           "title": "Newest row per source",
           "sql": "select * from health"

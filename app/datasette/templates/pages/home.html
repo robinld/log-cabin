@@ -198,8 +198,8 @@ async function render() {
   $("activity").innerHTML = acts.join("") || `<div class="empty">Nothing yet</div>`;
 
   // --- Feed health: the alarm reports every 30 s, YoLink is polled every 30 min.
-  const limits = {evl: 120, yolink: 3600};
-  const label = {evl: "Alarm panel", yolink: "YoLink"};
+  const limits = {evl: 120, yolink: 3600, unifi: 3600};
+  const label = {evl: "Alarm panel", yolink: "YoLink", unifi: "UniFi"};
   $("feeds").innerHTML = feeds.map((f) => {
     const fresh = (Date.now() - new Date(f.received_at)) / 1000 < (limits[f.source] || 3600);
     return `<span class="${fresh ? "ok" : "bad"}">${esc(label[f.source] || f.source)} ${esc(ago(f.received_at))}</span>`;
