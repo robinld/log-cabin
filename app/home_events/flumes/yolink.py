@@ -22,7 +22,7 @@ import uuid
 import aiomqtt
 import httpx
 
-from . import config, db
+from .. import config, db
 
 log = logging.getLogger("yolink")
 
@@ -83,7 +83,7 @@ class YoLink:
         return body.get("data") or {}
 
 
-class Ingest:
+class Flume:
     def __init__(self, yl, conn):
         self.yl, self.conn = yl, conn
         self.home_id = None
@@ -186,11 +186,11 @@ async def main():
     config.setup_logging()
     conn = db.connect()
     db.init(conn)
-    ingest = Ingest(YoLink(config.param("yolink/uaid"), config.param("yolink/secret")), conn)
-    await ingest.refresh_devices()
+    flume = Flume(YoLink(config.param("yolink/uaid"), config.param("yolink/secret")), conn)
+    await flume.refresh_devices()
     await asyncio.gather(
-        ingest.mqtt_forever(),
-        ingest.poll_forever(),
+        flume.mqtt_forever(),
+        flume.poll_forever(),
     )
 
 

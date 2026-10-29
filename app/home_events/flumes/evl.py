@@ -13,7 +13,7 @@ import asyncio
 import logging
 import time
 
-from . import config, db
+from .. import config, db
 
 log = logging.getLogger("evl")
 
@@ -58,7 +58,7 @@ class LoginFailed(Exception):
     pass
 
 
-class Ingest:
+class Flume:
     def __init__(self, conn, host, password):
         self.conn, self.host, self.password = conn, host, password
         self.last_stored = {}  # line -> time stored
@@ -136,8 +136,8 @@ async def main():
     config.setup_logging()
     conn = db.connect()
     db.init(conn)
-    ingest = Ingest(conn, config.param("evl/host"), config.param("evl/password"))
-    await ingest.run_forever()
+    flume = Flume(conn, config.param("evl/host"), config.param("evl/password"))
+    await flume.run_forever()
 
 
 if __name__ == "__main__":

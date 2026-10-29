@@ -10,9 +10,10 @@ Aggregate logs across various IoT systems and query them.
 |---|---|
 | `infra/` | Terraform: instance, data volume + snapshot policy, SSM secrets |
 | `app/home_events/db.py` | One append-only `log` table (each message as received, plus `source`, `event_type`, `event_name`, `device_id` and `ts` columns) and the SQL views that interpret it |
-| `app/home_events/yolink_ingest.py` | MQTT subscriber plus a periodic `getState` poll, so changes MQTT missed still show up |
-| `app/home_events/evl_ingest.py` | Read-only EnvisaLink (Honeywell alarm panel) TPI session over the WireGuard tunnel; stores every message raw; views derive zones, open intervals and troubles |
-| `app/home_events/unifi_syslog.py` | Syslog listener (UDP and TCP, port 5514) for the UniFi console's SIEM Server integration; stores each CEF line raw |
+| `app/home_events/flumes/` | One **flume** per home system: each carries that system's messages into `log`, as received |
+| `app/home_events/flumes/yolink.py` | MQTT subscriber plus a periodic `getState` poll, so changes MQTT missed still show up |
+| `app/home_events/flumes/evl.py` | Read-only EnvisaLink (Honeywell alarm panel) TPI session over the WireGuard tunnel; stores every message raw; views derive zones, open intervals and troubles |
+| `app/home_events/flumes/unifi.py` | Syslog listener (UDP and TCP, port 5514) for the UniFi console's SIEM Server integration; stores each CEF line raw |
 | `app/install.sh` | Idempotent installer the box runs on first boot and on every deploy |
 | `scripts/` | `set-secrets.sh`, `deploy.sh`, `dashboard.sh` |
 

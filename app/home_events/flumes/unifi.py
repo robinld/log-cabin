@@ -14,7 +14,7 @@ import logging
 import os
 import re
 
-from . import config, db
+from .. import config, db
 
 log = logging.getLogger("unifi")
 

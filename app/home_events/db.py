@@ -230,9 +230,9 @@ def migrate_old_tables(conn):
     """Copy rows from the v0.2.x tables into `log`, then drop those tables.
 
     devices, device_state and heartbeats were derived, so they are dropped
-    without copying: the ingesters re-fetch the device list on start.
+    without copying: the YoLink flume re-fetches the device list on start.
     """
-    from .evl_ingest import evl_fields
+    from .flumes.evl import evl_fields
 
     conn.execute("BEGIN IMMEDIATE")
     try:

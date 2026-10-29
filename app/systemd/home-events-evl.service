@@ -1,5 +1,5 @@
 [Unit]
-Description=EnvisaLink alarm panel ingest (read-only)
+Description=EnvisaLink alarm panel flume (read-only)
 After=network-online.target
 Wants=network-online.target
 RequiresMountsFor=/data
@@ -9,7 +9,7 @@ StartLimitIntervalSec=0
 User=homeevents
 EnvironmentFile=/etc/home-events/env
 Environment=PYTHONPATH=/opt/home-events/app PYTHONUNBUFFERED=1
-ExecStart=/opt/home-events/venv/bin/python -m home_events.evl_ingest
+ExecStart=/opt/home-events/venv/bin/python -m home_events.flumes.evl
 Restart=always
 RestartSec=30
 
