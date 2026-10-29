@@ -2,3 +2,4 @@ aiomqtt>=2.3,<3
 httpx>=0.27,<1
 boto3>=1.35
 datasette>=0.65,<1
+pylutron-caseta>=0.30,<1

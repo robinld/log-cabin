@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS log_device ON log(device_id, id);
 VIEWS = """
 DROP VIEW IF EXISTS device_names;
 CREATE VIEW device_names AS
--- YoLink names from the newest device list; alarm zones as the keypad named them.
+-- YoLink and Lutron names from their newest device lists; alarm zones as the keypad named them.
 WITH latest AS (
     SELECT body FROM log
     WHERE source = 'yolink' AND event_name = 'getDeviceList'
@@ -43,7 +43,18 @@ SELECT 'yolink' AS source, json_extract(d.value, '$.deviceId') AS device_id,
        json_extract(d.value, '$.name') AS name, json_extract(d.value, '$.type') AS type
 FROM latest, json_each(latest.body, '$.devices') AS d
 UNION ALL
-SELECT 'evl', cast(zone AS text), name, 'zone' FROM alarm_zones;
+SELECT 'evl', cast(zone AS text), name, 'zone' FROM alarm_zones
+UNION ALL
+-- Lutron zones (dimmers, switches) from the newest device list, as "Area Device".
+SELECT 'lutron', substr(json_extract(z.value, '$.href'), 2),
+       coalesce(json_extract(d.value, '$.FullyQualifiedName[0]') || ' '
+                || json_extract(d.value, '$.FullyQualifiedName[1]'),
+                json_extract(d.value, '$.Name')),
+       json_extract(d.value, '$.DeviceType')
+FROM (SELECT body FROM log WHERE source = 'lutron' AND event_name = '/device'
+      ORDER BY id DESC LIMIT 1) AS latest_lutron,
+     json_each(latest_lutron.body, '$.Body.Devices') AS d,
+     json_each(d.value, '$.LocalZones') AS z;
 
 DROP VIEW IF EXISTS events;
 CREATE VIEW events AS

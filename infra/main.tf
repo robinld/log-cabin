@@ -13,6 +13,8 @@ locals {
     evl_host       = "evl/host"
     evl_password   = "evl/password"
     protect_key    = "protect/api_key"
+    lutron_host    = "lutron/host"
+    lutron_certs   = "lutron/certs"
   }
 }
 
@@ -90,6 +92,14 @@ data "aws_iam_policy_document" "box" {
     sid       = "ReadOwnParams"
     actions   = ["ssm:GetParameter", "ssm:GetParameters"]
     resources = ["arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.param_prefix}/*"]
+  }
+
+  # Lutron pairing runs on the box (it needs a button press at the bridge) and
+  # stores the client certificate it gets. The box can write nothing else.
+  statement {
+    sid       = "WriteLutronCerts"
+    actions   = ["ssm:PutParameter"]
+    resources = ["arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.param_prefix}/lutron/certs"]
   }
 }
 
