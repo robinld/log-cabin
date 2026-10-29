@@ -1,8 +1,8 @@
 """EnvisaLink (Honeywell) TPI -> SQLite. Read-only.
 
 Holds the one TPI session the EVL allows, on port 4025 over the WireGuard
-tunnel, and stores every line it sends in alarm_messages. Zones, open
-intervals and troubles are derived at query time by the views in db.py.
+tunnel, and appends every line it sends to the log table, as sent. Zones,
+open intervals and troubles are derived at query time by the views in db.py.
 
 The only command ever sent is ^02 (dump zone timers), every 30 s, which also
 keeps the session alive. Never ^03: that is a keypress, and keypresses can
@@ -10,7 +10,6 @@ arm, disarm or program the panel.
 """
 
 import asyncio
-import json
 import logging
 import time
 
@@ -29,6 +28,31 @@ MIN_BACKOFF_S, MAX_BACKOFF_S = 5, 300
 # always stored. Kept under the 45 s gap used by alarm_zone_intervals.
 REPEAT_EVERY_S = 30
 
+KINDS = {"%00": "keypad", "%01": "zone_state", "%02": "partition_state",
+         "%03": "cid", "%FF": "zone_timers"}
+ZONE_SCREENS = {"FAULT", "CHECK", "LOBAT", "BYPAS", "ALARM"}
+
+
+def evl_fields(line):
+    """A raw TPI line -> (event_type, event_name, zone) for the log columns.
+
+    Keypad screens are named by their first word ("FAULT 13 DINING ..." ->
+    FAULT, "****DISARMED**** Ready to Arm" -> DISARMED), with the zone for
+    screens that name one. CID events are named by their event code.
+    """
+    if not (line.startswith("%") and line.endswith("$")):
+        return "unknown", None, None
+    kind = KINDS.get(line[:3], line[:3])
+    data = line[4:-1]
+    if kind == "keypad":
+        words = data.split(",", 4)[-1].split()
+        name = words[0].strip("*") if words else None
+        zone = words[1] if name in ZONE_SCREENS and len(words) > 1 and words[1].isdigit() else None
+        return kind, name or None, str(int(zone)) if zone else None
+    if kind == "cid":
+        return kind, data.split(",")[0], None
+    return kind, None, None
+
 
 class LoginFailed(Exception):
     pass
@@ -37,9 +61,7 @@ class LoginFailed(Exception):
 class Ingest:
     def __init__(self, conn, host, password):
         self.conn, self.host, self.password = conn, host, password
-        self.connected = False
-        self.last_line_at = None
-        self.last_stored = {}  # (code, data) -> time stored
+        self.last_stored = {}  # line -> time stored
 
     def store(self, line):
         if line.startswith("^"):
@@ -47,23 +69,20 @@ class Ingest:
             if line[4:6] != "00":
                 log.warning("EVL rejected a command: %s", line)
             return
-        if line.startswith("%") and line.endswith("$"):
-            code, data = line[:3], line[4:-1]
-        else:
-            code, data = "?", line  # keep anything unexpected, as sent
         now = time.time()
-        if now - self.last_stored.get((code, data), 0) < REPEAT_EVERY_S:
+        if now - self.last_stored.get(line, 0) < REPEAT_EVERY_S:
             return
-        db.insert_alarm_message(self.conn, code, data)
+        event_type, event_name, zone = evl_fields(line)
+        db.append(self.conn, source="evl", event_type=event_type, event_name=event_name,
+                  device_id=zone, body=line)
         # Forget anything older than the window, so this stays a handful of entries.
         self.last_stored = {k: t for k, t in self.last_stored.items() if now - t < REPEAT_EVERY_S}
-        self.last_stored[(code, data)] = now
+        self.last_stored[line] = now
 
     async def readline(self, reader, timeout):
         line = await asyncio.wait_for(reader.readline(), timeout)
         if not line:
             raise ConnectionError("EVL closed the connection (another TPI client connected?)")
-        self.last_line_at = time.time()
         return line.decode("ascii", "replace").strip()
 
     async def dump_forever(self, writer):
@@ -84,7 +103,6 @@ class Ingest:
             if reply != "OK":
                 raise LoginFailed(reply)
             log.info("logged in to %s", self.host)
-            self.connected = True
             dumper = asyncio.create_task(self.dump_forever(writer))
             try:
                 while True:
@@ -94,7 +112,6 @@ class Ingest:
             finally:
                 dumper.cancel()
         finally:
-            self.connected = False
             writer.close()
 
     async def run_forever(self):
@@ -114,20 +131,13 @@ class Ingest:
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, MAX_BACKOFF_S)
 
-    async def heartbeat_forever(self):
-        while True:
-            age = None if self.last_line_at is None else int(time.time() - self.last_line_at)
-            db.heartbeat(self.conn, "evl_ingest", json.dumps(
-                {"connected": self.connected, "seconds_since_message": age}))
-            await asyncio.sleep(60)
-
 
 async def main():
     config.setup_logging()
     conn = db.connect()
     db.init(conn)
     ingest = Ingest(conn, config.param("evl/host"), config.param("evl/password"))
-    await asyncio.gather(ingest.run_forever(), ingest.heartbeat_forever())
+    await ingest.run_forever()
 
 
 if __name__ == "__main__":

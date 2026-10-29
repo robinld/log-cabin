@@ -5,23 +5,23 @@
       "queries": {
         "recent": {
           "title": "Last 200 events",
-          "sql": "select ts, source, event_type, device_name, summary from events order by ts desc limit 200"
+          "sql": "select ts, source, event_type, event_name, device_name, body from events order by id desc limit 200"
         },
         "per_device_per_day": {
           "title": "Events per device per day (last 30 days)",
-          "sql": "select date(ts) as day, coalesce(device_name, device_id) as device, count(*) as n from events where ts >= date('now', '-30 days') group by day, device order by day desc, n desc"
+          "sql": "select date(ts) as day, source, coalesce(device_name, device_id, event_type) as device, count(*) as n from events where ts >= date('now', '-30 days') group by day, source, device order by day desc, n desc"
         },
         "silent_devices": {
-          "title": "Devices by last event",
-          "sql": "select d.name, d.type, max(e.ts) as last_event from devices d left join events e on e.device_id = d.device_id group by d.device_id order by last_event"
+          "title": "YoLink devices by last event",
+          "sql": "select n.name, n.type, max(l.ts) as last_event from device_names n left join log l on l.source = n.source and l.device_id = n.device_id and coalesce(l.event_name, '') not in ('getState', 'getDeviceList') where n.source = 'yolink' group by n.device_id order by last_event"
         },
         "alarm_recent": {
           "title": "Last 200 alarm panel messages (without zone-timer dumps)",
-          "sql": "select received_at, code, data from alarm_messages where code <> '%FF' order by id desc limit 200"
+          "sql": "select received_at, event_type, event_name, device_id, body from log where source = 'evl' and event_type <> 'zone_timers' order by id desc limit 200"
         },
         "health": {
-          "title": "Service heartbeats",
-          "sql": "select service, at, detail from heartbeats"
+          "title": "Newest row per source",
+          "sql": "select * from health"
         }
       }
     }

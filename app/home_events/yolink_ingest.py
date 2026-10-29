@@ -5,11 +5,14 @@ device's state on a timer to catch anything that was missed while the
 connection was down. YoLink gives personal (UAC) accounts no history API, so
 whatever this process doesn't see is gone.
 
+Everything is appended to the log table as received: MQTT reports, every
+poll response and the device list. The views in db.py find state changes
+and device names.
+
 Docs: https://doc.yosmart.com/docs/protocol/openAPIV2/
 """
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -85,42 +88,37 @@ class Ingest:
         self.yl, self.conn = yl, conn
         self.home_id = None
         self.devices = {}  # deviceId -> device dict from Home.getDeviceList
-        self.last_message_at = None
 
     async def refresh_devices(self):
         info = await self.yl.call("Home.getGeneralInfo")
         self.home_id = info["id"]
         data = await self.yl.call("Home.getDeviceList")
         self.devices = {d["deviceId"]: d for d in data.get("devices", [])}
-        for d in self.devices.values():
-            db.upsert_device(self.conn, device_id=d["deviceId"], source="yolink",
-                             name=d.get("name"), type_=d.get("type"),
-                             model=d.get("modelName"))
+        # Each device's token authorizes API calls to it. The database is
+        # readable from the home LAN, so it is the one field not stored.
+        stored = {**data, "devices": [{k: v for k, v in d.items() if k != "token"}
+                                      for d in data.get("devices", [])]}
+        db.append(self.conn, source="yolink", event_type="Home", event_name="getDeviceList",
+                  body=stored)
         log.info("home %s: %d devices", self.home_id, len(self.devices))
 
     # ---------------------------------------------------------------- MQTT --
 
     def handle_report(self, raw):
+        body = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
         try:
-            msg = json.loads(raw)
+            msg = json.loads(body)
         except ValueError:
             msg = None
         if not isinstance(msg, dict):
-            log.warning("unexpected MQTT payload: %r", raw[:200])
-            msg = {"raw": raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)}
-        device_id = msg.get("deviceId")
-        event = msg.get("event") or "unknown"
-        ts_ms = msg.get("time") or time.time() * 1000
-        name = (self.devices.get(device_id) or {}).get("name")
-        msgid = msg.get("msgid") or hashlib.sha1(raw if isinstance(raw, bytes) else raw.encode()).hexdigest()
-        new = db.insert_event(
-            self.conn, source="yolink", event_type=event, ts_ms=ts_ms,
-            device_id=device_id, device_name=name,
-            summary=summarize(name or device_id, event, msg.get("data")),
-            dedupe_key=f"yolink:{device_id}:{msgid}", payload=msg,
-        )
-        self.last_message_at = time.time()
-        log.debug("%s %s %s", "stored" if new else "dup", name, event)
+            log.warning("unexpected MQTT payload: %r", body[:200])
+            msg = {}
+        # "DoorSensor.Alert" -> event_type DoorSensor, event_name Alert
+        event_type, _, event_name = (msg.get("event") or "unknown").partition(".")
+        db.append(self.conn, source="yolink", event_type=event_type,
+                  event_name=event_name or None, device_id=msg.get("deviceId"),
+                  ts_ms=msg.get("time"), body=body)
+        log.debug("stored %s %s", msg.get("deviceId"), msg.get("event"))
 
     async def mqtt_forever(self):
         backoff = MIN_BACKOFF_S
@@ -155,7 +153,7 @@ class Ingest:
     # ---------------------------------------------------------------- poll --
 
     async def poll_once(self):
-        changed = 0
+        polled = 0
         for d in list(self.devices.values()):
             if d.get("type") in NO_STATE_TYPES:
                 continue
@@ -165,28 +163,11 @@ class Ingest:
             except (YoLinkError, httpx.HTTPError) as e:
                 log.debug("getState %s (%s) failed: %s", d.get("name"), d.get("type"), e)
                 continue
-            state = data.get("state", data)
-            state_json = json.dumps(state, sort_keys=True)
-            row = self.conn.execute("SELECT state FROM device_state WHERE device_id=?",
-                                    (d["deviceId"],)).fetchone()
-            if row is None or row["state"] != state_json:
-                now_ms = time.time() * 1000
-                db.insert_event(
-                    self.conn, source="yolink_poll", event_type=f"{d['type']}.poll_change",
-                    ts_ms=now_ms, device_id=d["deviceId"], device_name=d.get("name"),
-                    summary=summarize(d.get("name"), "polled state", state),
-                    dedupe_key=f"yolink-poll:{d['deviceId']}:{int(now_ms)}",
-                    payload={"baseline": row is None, "data": data},
-                )
-                changed += 1
-            self.conn.execute(
-                """INSERT INTO device_state (device_id, state, polled_at) VALUES (?, ?, ?)
-                   ON CONFLICT(device_id) DO UPDATE SET state=excluded.state,
-                   polled_at=excluded.polled_at""",
-                (d["deviceId"], state_json, db.iso()),
-            )
+            db.append(self.conn, source="yolink", event_type=d["type"], event_name="getState",
+                      device_id=d["deviceId"], body=data)
+            polled += 1
             await asyncio.sleep(1)  # be gentle with the API
-        log.info("poll done: %d of %d devices changed", changed, len(self.devices))
+        log.info("poll done: %d of %d devices answered", polled, len(self.devices))
 
     async def poll_forever(self):
         last_refresh = time.time()
@@ -200,20 +181,6 @@ class Ingest:
                 log.exception("poll failed")
             await asyncio.sleep(POLL_MINUTES * 60)
 
-    async def heartbeat_forever(self):
-        while True:
-            age = None if self.last_message_at is None else int(time.time() - self.last_message_at)
-            db.heartbeat(self.conn, "yolink_ingest", json.dumps({"seconds_since_mqtt_message": age}))
-            await asyncio.sleep(60)
-
-
-def summarize(name, event, data):
-    if isinstance(data, dict) and "state" in data:
-        data = data["state"]
-    detail = data if isinstance(data, str) else json.dumps(data, separators=(",", ":"))
-    s = f"{name or 'unknown device'}: {event} {detail or ''}".strip()
-    return s if len(s) <= 200 else s[:197] + "..."
-
 
 async def main():
     config.setup_logging()
@@ -224,7 +191,6 @@ async def main():
     await asyncio.gather(
         ingest.mqtt_forever(),
         ingest.poll_forever(),
-        ingest.heartbeat_forever(),
     )
 
 

@@ -9,8 +9,9 @@ Aggregate logs across various IoT systems and query them.
 | Path | What |
 |---|---|
 | `infra/` | Terraform: instance, data volume + snapshot policy, SSM secrets |
-| `app/home_events/yolink_ingest.py` | MQTT subscriber plus a periodic `getState` poll that records any change MQTT missed |
-| `app/home_events/evl_ingest.py` | Read-only EnvisaLink (Honeywell alarm panel) TPI session over the WireGuard tunnel; stores every message raw, and SQL views in `db.py` derive zones, open intervals and troubles |
+| `app/home_events/db.py` | One append-only `log` table (each message as received, plus `source`, `event_type`, `event_name`, `device_id` and `ts` columns) and the SQL views that interpret it |
+| `app/home_events/yolink_ingest.py` | MQTT subscriber plus a periodic `getState` poll, so changes MQTT missed still show up |
+| `app/home_events/evl_ingest.py` | Read-only EnvisaLink (Honeywell alarm panel) TPI session over the WireGuard tunnel; stores every message raw; views derive zones, open intervals and troubles |
 | `app/install.sh` | Idempotent installer the box runs on first boot and on every deploy |
 | `scripts/` | `set-secrets.sh`, `deploy.sh`, `dashboard.sh` |
 

@@ -26,6 +26,8 @@ mkdir -p "$ROOT/app"
 cp -r "$SRC/home_events" "$SRC/datasette" "$ROOT/app/"
 chown -R root:root "$ROOT/app"
 
+# Stop the writers first, so a schema migration never races old code.
+systemctl stop home-events-yolink.service home-events-evl.service 2>/dev/null || true
 sudo -u homeevents env DB_PATH="$DB_PATH" PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.db
 
 # --- WireGuard to the home network (skipped until its secret is set) ------
