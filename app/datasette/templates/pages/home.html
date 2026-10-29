@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Home">
+<title>Home</title>
+<style>
+  :root {
+    --bg: #f2f2f7; --card: #ffffff; --text: #1c1c1e; --muted: #6e6e73; --line: #e5e5ea;
+    --ok: #1f9d55; --warn: #c27c0e; --bad: #d1342f; --info: #2f6fdb;
+    --ok-bg: #e6f6ec; --warn-bg: #fdf3e1; --bad-bg: #fdeaea; --info-bg: #e8f0fd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000; --card: #1c1c1e; --text: #f2f2f7; --muted: #98989f; --line: #2c2c2e;
+      --ok: #34c759; --warn: #ffb340; --bad: #ff5a52; --info: #5e9cff;
+      --ok-bg: #12301c; --warn-bg: #3a2a0c; --bad-bg: #3d1513; --info-bg: #142540;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  }
+  main { max-width: 560px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; justify-content: space-between; margin: 8px 4px 16px; }
+  h1 { font-size: 34px; margin: 0; letter-spacing: -0.5px; }
+  .updated { color: var(--muted); font-size: 13px; }
+  h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
+       color: var(--muted); margin: 22px 4px 8px; }
+  .card { background: var(--card); border-radius: 14px; overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row .name { flex: 1; min-width: 0; }
+  .row .sub { color: var(--muted); font-size: 13px; }
+  .row .val { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .big { font-size: 22px; font-weight: 600; }
+  .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 14px; font-weight: 600; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  .pill.ok { background: var(--ok-bg); } .pill.warn { background: var(--warn-bg); }
+  .pill.bad { background: var(--bad-bg); } .pill.info { background: var(--info-bg); color: var(--info); }
+  .hero { padding: 18px 16px; display: flex; align-items: center; gap: 14px; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+  .hero .title { font-size: 24px; font-weight: 700; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 14px; }
+  .empty { color: var(--muted); padding: 12px 14px; }
+  .feeds { display: flex; gap: 16px; justify-content: center; color: var(--muted); font-size: 13px; margin-top: 22px; }
+  .feeds span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                        margin-right: 6px; background: var(--muted); vertical-align: 1px; }
+  .feeds span.ok::before { background: var(--ok); } .feeds span.bad::before { background: var(--bad); }
+  .feeds span.ok, .feeds span.bad { color: var(--muted); }
+  #error { display: none; margin-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Home</h1><span class="updated" id="updated">Loading…</span></header>
+
+  <div class="card"><div class="hero" id="alarm-hero"><span class="dot"></span><div><div class="title">Alarm</div><div class="sub">Loading…</div></div></div>
+    <div class="chips" id="alarm-chips"></div></div>
+
+  <h2>Doors</h2><div class="card" id="doors"></div>
+  <h2>Temperature</h2><div class="card" id="temps"></div>
+  <h2>Water</h2><div class="card" id="water"></div>
+  <h2>Recent activity</h2><div class="card" id="activity"></div>
+
+  <div class="feeds" id="feeds"></div>
+  <div class="card empty bad" id="error"></div>
+</main>
+<script>
+const DB = "/events.json";
+
+async function sql(query) {
+  const r = await fetch(DB + "?_shape=array&sql=" + encodeURIComponent(query));
+  if (!r.ok) throw new Error("query failed: " + r.status);
+  return r.json();
+}
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
+
+function ago(t) {
+  const s = Math.max(0, (Date.now() - new Date(t).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + " hr ago";
+  return Math.round(s / 86400) + " d ago";
+}
+const clock = (t) => new Date(t).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+const day = (t) => {
+  const d = new Date(t), today = new Date();
+  return d.toDateString() === today.toDateString() ? clock(t)
+    : d.toLocaleDateString([], {weekday: "short"}) + " " + clock(t);
+};
+const fahrenheit = (c) => Math.round(c * 9 / 5 + 32);
+
+// A YoLink body's state object: MQTT reports carry it in data, polls in state.
+function deviceState(body) {
+  const b = JSON.parse(body);
+  if (b.data && typeof b.data === "object") return b.data;
+  if (b.state && typeof b.state === "object") return b.state;
+  return b;
+}
+
+// "%00,01,1C08,08,00,<keypad text>$" -> {leds, text}
+function keypad(line) {
+  const f = line.slice(4, -1).split(",");
+  return {leds: parseInt(f[1], 16), text: f.slice(4).join(",").replace(/\s+/g, " ").trim()};
+}
+
+async function render() {
+  const [devices, screens, activity, feeds] = await Promise.all([
+    sql(`select n.device_id, n.name, n.type, l.ts, l.body
+         from device_names n join log l on l.id = (
+           select max(id) from log where source = 'yolink' and device_id = n.device_id)
+         where n.source = 'yolink' order by n.name`),
+    sql(`select received_at, body from log
+         where source = 'evl' and event_type = 'keypad' and id > (select max(id) - 400 from log)
+         order by id desc`),
+    sql(`select ts, device_id, event_type, body from log
+         where source = 'yolink' and event_name in ('Alert', 'StatusChange')
+         order by id desc limit 12`),
+    sql(`select l.source, l.received_at from log l
+         join (select source, max(id) as id from log group by source) m on m.id = l.id`),
+  ]);
+
+  // --- Alarm: screens from the last 90 s. The keypad cycles through them.
+  const recent = screens.filter((s) => Date.now() - new Date(s.received_at) < 90000);
+  const now = recent.length ? keypad(recent[0].body) : null;
+  const seen = new Map();
+  for (const s of recent) { const k = keypad(s.body); if (!seen.has(k.text)) seen.set(k.text, k); }
+  let cls = "warn", title = "No recent keypad data", sub = "";
+  if (now) {
+    const L = now.leds;
+    if (L & 0x0001) { cls = "bad"; title = "ALARM"; }
+    else if (L & 0x0004) { cls = "info"; title = "Armed (away)"; }
+    else if (L & 0x8000) { cls = "info"; title = "Armed (stay)"; }
+    else if (L & 0x1000) { cls = "ok"; title = "Disarmed · Ready"; }
+    else { cls = "warn"; title = "Disarmed · Not ready"; }
+    sub = (L & 0x0008) ? "Power OK" : "On battery power";
+    if (L & 0x0020) sub += " · Chime on";
+  }
+  $("alarm-hero").innerHTML = `<span class="dot ${cls === "info" ? "ok" : cls}"></span>
+    <div><div class="title">${esc(title)}</div><div class="sub">${esc(sub)}</div></div>`;
+  const chips = [];
+  for (const k of seen.values()) {
+    const w = k.text.split(" ");
+    if (w[0] === "FAULT") chips.push(`<span class="pill warn">Open: ${esc(w.slice(2).join(" "))}</span>`);
+    else if (w[0] === "CHECK") chips.push(`<span class="pill bad">Check: ${esc(w.slice(2).join(" "))}</span>`);
+    else if (w[0] === "LOBAT") chips.push(`<span class="pill bad">Low battery: ${esc(w.slice(2).join(" "))}</span>`);
+  }
+  $("alarm-chips").innerHTML = chips.join("");
+
+  // --- YoLink devices
+  const byType = (t) => devices.filter((d) => d.type === t);
+  const names = Object.fromEntries(devices.map((d) => [d.device_id, d.name]));
+
+  const doors = byType("DoorSensor").map((d) => {
+    const s = deviceState(d.body);
+    const open = s.state === "open";
+    const since = s.stateChangedAt ? "since " + day(s.stateChangedAt) : "updated " + ago(d.ts);
+    return `<div class="row"><div class="name">${esc(d.name)}<div class="sub">${esc(since)}</div></div>
+      <div class="val"><span class="pill ${open ? "warn" : "ok"}">${open ? "Open" : "Closed"}</span></div></div>`;
+  });
+  $("doors").innerHTML = doors.join("") || `<div class="empty">No door sensors</div>`;
+
+  const temps = byType("THSensor").map((d) => {
+    const s = deviceState(d.body);
+    const alert = s.state === "alert";
+    return `<div class="row"><div class="name">${esc(d.name)}<div class="sub">${s.humidity != null ? esc(s.humidity) + "% humidity · " : ""}${esc(ago(d.ts))}</div></div>
+      <div class="val"><span class="big ${alert ? "bad" : ""}">${s.temperature != null ? fahrenheit(s.temperature) + "°" : "–"}</span>
+      ${alert ? `<div class="sub bad">outside limits</div>` : ""}</div></div>`;
+  });
+  $("temps").innerHTML = temps.join("") || `<div class="empty">No temperature sensors</div>`;
+
+  const leaks = byType("LeakSensor");
+  const wet = leaks.filter((d) => deviceState(d.body).state !== "normal");
+  const water = [];
+  water.push(`<div class="row"><div class="name">Leak sensors<div class="sub">${leaks.length} sensors</div></div>
+    <div class="val"><span class="pill ${wet.length ? "bad" : "ok"}">${wet.length ? wet.length + " alert" : "All dry"}</span></div></div>`);
+  for (const d of wet) water.push(`<div class="row"><div class="name bad">${esc(d.name)}</div><div class="val">${esc(deviceState(d.body).state)}</div></div>`);
+  for (const d of byType("Switch")) {
+    const s = deviceState(d.body);
+    water.push(`<div class="row"><div class="name">${esc(d.name)}<div class="sub">${esc(ago(d.ts))}</div></div>
+      <div class="val"><span class="pill info">${esc(s.state)}</span></div></div>`);
+  }
+  $("water").innerHTML = water.join("");
+
+  const acts = activity.map((a) => {
+    const s = deviceState(a.body);
+    return `<div class="row"><div class="name">${esc(names[a.device_id] || a.event_type)}<div class="sub">${esc(day(a.ts))}</div></div>
+      <div class="val">${esc(s.state ?? "")}</div></div>`;
+  });
+  $("activity").innerHTML = acts.join("") || `<div class="empty">Nothing yet</div>`;
+
+  // --- Feed health: the alarm reports every 30 s, YoLink is polled every 30 min.
+  const limits = {evl: 120, yolink: 3600};
+  const label = {evl: "Alarm panel", yolink: "YoLink"};
+  $("feeds").innerHTML = feeds.map((f) => {
+    const fresh = (Date.now() - new Date(f.received_at)) / 1000 < (limits[f.source] || 3600);
+    return `<span class="${fresh ? "ok" : "bad"}">${esc(label[f.source] || f.source)} ${esc(ago(f.received_at))}</span>`;
+  }).join("");
+
+  $("updated").textContent = "Updated " + clock(new Date());
+  $("error").style.display = "none";
+}
+
+async function tick() {
+  try { await render(); }
+  catch (e) { $("error").textContent = "Couldn't refresh: " + e.message; $("error").style.display = "block"; }
+}
+tick();
+setInterval(tick, 15000);
+</script>
+</body>
+</html>

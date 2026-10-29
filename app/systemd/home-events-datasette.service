@@ -9,7 +9,7 @@ StartLimitIntervalSec=0
 User=homeevents
 EnvironmentFile=/etc/home-events/env
 Environment=PYTHONPATH=/opt/home-events/app PYTHONUNBUFFERED=1
-ExecStart=/opt/home-events/venv/bin/datasette serve ${DB_PATH} -h 0.0.0.0 -p 8001 -m /opt/home-events/app/datasette/metadata.json --setting sql_time_limit_ms 5000
+ExecStart=/opt/home-events/venv/bin/datasette serve ${DB_PATH} -h 0.0.0.0 -p 8001 -m /opt/home-events/app/datasette/metadata.json --template-dir /opt/home-events/app/datasette/templates --setting sql_time_limit_ms 5000
 Restart=always
 RestartSec=30
 
