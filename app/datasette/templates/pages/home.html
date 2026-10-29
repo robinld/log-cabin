@@ -54,12 +54,32 @@
   .feeds span.ok::before { background: var(--ok); } .feeds span.bad::before { background: var(--bad); }
   .feeds span.ok, .feeds span.bad { color: var(--muted); }
   #error { display: none; margin-top: 12px; }
+  .tabs { display: flex; background: var(--line); border-radius: 9px; padding: 2px; margin: 0 0 16px; }
+  .tabs button { flex: 1; border: 0; background: none; color: var(--text); font: inherit; font-size: 14px;
+                 font-weight: 600; padding: 6px 0; border-radius: 7px; cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .ev { display: flex; align-items: baseline; gap: 8px; padding: 9px 12px; font-size: 15px; cursor: pointer; }
+  .ev + .ev { border-top: 1px solid var(--line); }
+  .ev .t { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
+  .ev .src { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+             flex: none; width: 46px; color: var(--muted); }
+  .ev .txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ev.open .txt { white-space: normal; }
+  .ev.new { animation: flash 2s ease-out; }
+  @keyframes flash { from { background: var(--info-bg); } to { background: transparent; } }
+  .s-evl { color: var(--bad) !important; } .s-yolink { color: var(--ok) !important; }
+  .s-unifi { color: var(--info) !important; } .s-lutron { color: var(--warn) !important; }
 </style>
 </head>
 <body>
 <main>
   <header><h1>Home</h1><span class="updated" id="updated">Loading…</span></header>
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-status" aria-selected="true">Status</button>
+    <button role="tab" id="tab-live" aria-selected="false">Live</button>
+  </nav>
 
+  <section id="status">
   <div class="card"><div class="hero" id="alarm-hero"><span class="dot"></span><div><div class="title">Alarm</div><div class="sub">Loading…</div></div></div>
     <div class="chips" id="alarm-chips"></div></div>
 
@@ -69,6 +89,9 @@
   <h2>Recent activity</h2><div class="card" id="activity"></div>
 
   <div class="feeds" id="feeds"></div>
+  </section>
+
+  <section id="live" hidden><div class="card" id="stream"><div class="empty">Loading…</div></div></section>
   <div class="card empty bad" id="error"></div>
 </main>
 <script>
@@ -112,6 +135,14 @@ function keypad(line) {
   return {leds: parseInt(f[1], 16), text: f.slice(4).join(",").replace(/\s+/g, " ").trim()};
 }
 
+function alarmStatus(L) {
+  if (L & 0x0001) return {cls: "bad", title: "ALARM"};
+  if (L & 0x0004) return {cls: "info", title: "Armed (away)"};
+  if (L & 0x8000) return {cls: "info", title: "Armed (stay)"};
+  if (L & 0x1000) return {cls: "ok", title: "Disarmed · Ready"};
+  return {cls: "warn", title: "Disarmed · Not ready"};
+}
+
 async function render() {
   const [devices, screens, activity, feeds] = await Promise.all([
     sql(`select n.device_id, n.name, n.type, l.ts, l.body
@@ -136,11 +167,7 @@ async function render() {
   let cls = "warn", title = "No recent keypad data", sub = "";
   if (now) {
     const L = now.leds;
-    if (L & 0x0001) { cls = "bad"; title = "ALARM"; }
-    else if (L & 0x0004) { cls = "info"; title = "Armed (away)"; }
-    else if (L & 0x8000) { cls = "info"; title = "Armed (stay)"; }
-    else if (L & 0x1000) { cls = "ok"; title = "Disarmed · Ready"; }
-    else { cls = "warn"; title = "Disarmed · Not ready"; }
+    ({cls, title} = alarmStatus(L));
     sub = (L & 0x0008) ? "Power OK" : "On battery power";
     if (L & 0x0020) sub += " · Chime on";
   }
@@ -209,12 +236,166 @@ async function render() {
   $("error").style.display = "none";
 }
 
+// --- Live: new events, one line each, newest first. Repeats are dropped: the
+// alarm panel keeps re-sending its keypad screens, YoLink sensors report the
+// same reading, and Lutron re-sends every level when it reconnects.
+const LIVE_SQL = `select id, received_at, source, event_type, event_name, device_id, body from log
+  where id > :since and (
+    (source = 'evl' and event_type in ('keypad', 'zone_state'))
+    or (source = 'yolink' and event_name in ('Report', 'Alert', 'StatusChange'))
+    or source = 'unifi'
+    or (source = 'lutron' and event_type = 'OneZoneStatus')
+    or (source = 'lennox' and event_name in ('zones', 'alerts')))
+  order by id limit 1000`;
+const LIVE_LABEL = {evl: "Alarm", yolink: "YoLink", unifi: "UniFi", lutron: "Lutron", lennox: "Lennox"};
+const LIVE_KEEP = 300;
+const live = {since: null, names: {}, last: {}, zones: null, lennox: {}, items: [], open: new Set()};
+
+const titleCase = (s) => String(s).toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+const levelText = (l) => l === 0 ? "off" : l === 100 ? "on" : l + "%";
+const stamp = (t) => {
+  const d = new Date(t), time = d.toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"})
+    .replace(/\s?[AP]M$/i, "");
+  return d.toDateString() === new Date().toDateString() ? time : d.toLocaleDateString([], {weekday: "short"}) + " " + time;
+};
+
+// "%01,<hex>$": a bit per zone, lowest bit of the first byte is zone 1.
+function openZones(line) {
+  const hex = line.slice(4, -1), open = new Set();
+  for (let i = 0; i < hex.length / 2; i++) {
+    const b = parseInt(hex.substr(i * 2, 2), 16);
+    for (let bit = 0; bit < 8; bit++) if (b & (1 << bit)) open.add(i * 8 + bit + 1);
+  }
+  return open;
+}
+
+// One log row -> {key, text} for the stream, or null to leave it out.
+function summarize(r) {
+  const name = (src, id) => live.names[src + ":" + id];
+  if (r.source === "evl" && r.event_type === "keypad") {
+    return {key: "evl:status", text: alarmStatus(keypad(r.body).leds).title};
+  }
+  if (r.source === "evl" && r.event_type === "zone_state") {
+    const now = openZones(r.body), prev = live.zones, zone = (z) => titleCase(name("evl", z) || "Zone " + z);
+    // A motion detector's zone "opens" while it sees motion.
+    const word = (z, on) => /motion/i.test(zone(z)) ? (on ? " motion" : " clear") : (on ? " opened" : " closed");
+    live.zones = now;
+    if (!prev) return {key: "evl:zones", text: now.size ? "Open: " + [...now].map(zone).join(", ") : "All zones closed"};
+    const changes = [...now].filter((z) => !prev.has(z)).map((z) => zone(z) + word(z, true))
+      .concat([...prev].filter((z) => !now.has(z)).map((z) => zone(z) + word(z, false)));
+    return changes.length ? {key: null, text: changes.join(", ")} : null;
+  }
+  if (r.source === "yolink") {
+    const d = deviceState(r.body), n = name("yolink", r.device_id) || r.event_type, key = "yolink:" + r.device_id;
+    if (r.event_type === "DoorSensor") return {key, text: n + (d.state === "open" ? " opened" : " closed")};
+    if (r.event_type === "LeakSensor") return {key, text: n + (d.state === "normal" ? ": dry" : ": " + d.state)};
+    if (r.event_type === "THSensor") {
+      if (d.temperature == null) return null;
+      return {key, text: `${n} ${fahrenheit(d.temperature)}°` + (d.humidity != null ? ` · ${Math.round(d.humidity)}%` : "")};
+    }
+    return {key, text: `${n} ${d.state ?? r.event_name}`};
+  }
+  if (r.source === "unifi") {
+    const m = /msg="([^"]*)"/.exec(r.body);
+    // "Upper Doorbell has recorded a person." -> "Upper Doorbell: person"; first sentence only.
+    const text = (m ? m[1] : r.event_name || r.event_type).split(/\.\s/)[0].replace(/\.$/, "")
+      .replace(/ has recorded (an? )?/, ": ");
+    return {key: null, text};
+  }
+  if (r.source === "lutron") {
+    const z = JSON.parse(r.body).Body?.ZoneStatus;
+    if (!z || z.Level == null) return null;
+    const id = z.href.split("/").slice(1, 3).join("/");
+    return {key: "lutron:" + id, text: `${name("lutron", id) || id} ${levelText(z.Level)}`};
+  }
+  if (r.source === "lennox" && r.event_name === "alerts") {
+    const n = JSON.parse(r.body).Data?.alerts?.meta?.numActiveAlerts;
+    if (n == null) return null;
+    return {key: "lennox:alerts", text: n ? `Thermostat: ${n} active alert${n > 1 ? "s" : ""}` : "Thermostat: no active alerts"};
+  }
+  if (r.source === "lennox") {
+    // Updates can be partial, so keep each zone's latest values and describe those.
+    for (const z of JSON.parse(r.body).Data?.zones || []) {
+      const st = live.lennox[z.id] = live.lennox[z.id] || {period: {}};
+      Object.assign(st.period, z.status?.period);
+      Object.assign(st, z.status, {period: st.period});
+    }
+    const parts = Object.entries(live.lennox).filter(([, st]) => st.temperature != null).map(([id, st]) => {
+      const sp = st.period.hsp != null ? ` · heat ${st.period.hsp} / cool ${st.period.csp}` : "";
+      return `${id === "0" ? "Thermostat" : "Zone " + (+id + 1)} ${st.temperature}°${sp} · ${st.tempOperation || "?"}`;
+    });
+    return parts.length ? {key: "lennox:zones", text: parts.join("; ")} : null;
+  }
+  return null;
+}
+
+async function liveFetch() {
+  if (live.since === null) {
+    const [names, [{m}]] = await Promise.all([
+      sql("select source, device_id, name from device_names"), sql("select max(id) as m from log")]);
+    for (const n of names) live.names[n.source + ":" + n.device_id] = n.name;
+    live.since = Math.max(0, (m || 0) - 4000);  // a couple of hours, to start with some history
+  }
+  const fresh = [];
+  for (;;) {
+    const r = await fetch(DB + "?_shape=array&since=" + live.since + "&sql=" + encodeURIComponent(LIVE_SQL));
+    if (!r.ok) throw new Error("query failed: " + r.status);
+    const rows = await r.json();
+    for (const row of rows) {
+      live.since = row.id;
+      let s;
+      try { s = summarize(row); } catch { s = null; }
+      if (!s || (s.key && live.last[s.key] === s.text)) continue;
+      if (s.key) live.last[s.key] = s.text;
+      fresh.push({id: row.id, t: row.received_at, src: row.source, text: s.text});
+    }
+    if (rows.length < 1000) break;
+  }
+  return fresh;
+}
+
+async function renderLive() {
+  const first = live.since === null, fresh = await liveFetch();
+  $("updated").textContent = "Live · " + clock(new Date());
+  $("error").style.display = "none";
+  if (!first && !fresh.length) return;
+  live.items = fresh.reverse().concat(live.items).slice(0, LIVE_KEEP);
+  const isNew = new Set(first ? [] : fresh.map((i) => i.id));
+  $("stream").innerHTML = live.items.map((i) => `<div class="ev${isNew.has(i.id) ? " new" : ""}${live.open.has(i.id) ? " open" : ""}" data-id="${i.id}">
+    <span class="t">${esc(stamp(i.t))}</span><span class="src s-${esc(i.src)}">${esc(LIVE_LABEL[i.src] || i.src)}</span>
+    <span class="txt">${esc(i.text)}</span></div>`).join("") || `<div class="empty">Nothing yet</div>`;
+}
+// Tap a row to see all of it.
+$("stream").addEventListener("click", (e) => {
+  const row = e.target.closest(".ev");
+  if (!row) return;
+  const id = +row.dataset.id;
+  live.open.has(id) ? live.open.delete(id) : live.open.add(id);
+  row.classList.toggle("open", live.open.has(id));
+});
+
+// --- Tabs. The Live tab is #live, so it can be bookmarked.
+let timer = null;
+const onLive = () => location.hash === "#live";
+
 async function tick() {
-  try { await render(); }
+  try { await (onLive() ? renderLive() : render()); }
   catch (e) { $("error").textContent = "Couldn't refresh: " + e.message; $("error").style.display = "block"; }
 }
-tick();
-setInterval(tick, 15000);
+
+function show() {
+  $("status").hidden = onLive();
+  $("live").hidden = !onLive();
+  $("tab-status").setAttribute("aria-selected", String(!onLive()));
+  $("tab-live").setAttribute("aria-selected", String(onLive()));
+  clearInterval(timer);
+  tick();
+  timer = setInterval(tick, onLive() ? 4000 : 15000);
+}
+$("tab-status").addEventListener("click", () => history.replaceState(null, "", "#") || show());
+$("tab-live").addEventListener("click", () => { location.hash = "live"; });
+window.addEventListener("hashchange", show);
+show();
 </script>
 </body>
 </html>
