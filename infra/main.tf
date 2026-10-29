@@ -15,6 +15,7 @@ locals {
     protect_key    = "protect/api_key"
     lutron_host    = "lutron/host"
     lutron_certs   = "lutron/certs"
+    lennox_host    = "lennox/host"
   }
 }
 

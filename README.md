@@ -15,6 +15,7 @@ Aggregate logs across various IoT systems and query them.
 | `app/home_events/flumes/evl.py` | Read-only EnvisaLink (Honeywell alarm panel) TPI session over the WireGuard tunnel; stores every message raw; views derive zones, open intervals and troubles |
 | `app/home_events/flumes/unifi.py` | Syslog listener (UDP and TCP, port 5514) for the UniFi console's SIEM Server integration; stores each CEF line raw |
 | `app/home_events/flumes/lutron.py` | Read-only Lutron Caseta LEAP session (dimmer and switch levels, Pico presses, occupancy); `python -m home_events.flumes.lutron pair` gets the bridge's client certificate |
+| `app/home_events/flumes/lennox.py` | Read-only Lennox iComfort S30 local API session (zones, setpoints, equipment, alerts) |
 | `app/install.sh` | Idempotent installer the box runs on first boot and on every deploy |
 | `scripts/` | `set-secrets.sh`, `deploy.sh`, `dashboard.sh` |
 
@@ -27,6 +28,7 @@ Prerequisites: AWS CLI with credentials and the [Session Manager plugin](https:/
 - **EnvisaLink** (optional, needs the WireGuard tunnel): its LAN address and TPI password, which is the same as its web login password. `set-secrets.sh` asks for both.
 - **UniFi SIEM logs** (optional, needs the WireGuard tunnel, with the gateway's VPN address in `AllowedIPs`): in UniFi, Settings → Control Plane → Integrations → Activity Logging → SIEM Server, pointed at the box's VPN address, port 5514.
 - **Lutron Caseta** (optional, needs the WireGuard tunnel): set `lutron/host` to the Smart Bridge's LAN address, deploy, then pair once while someone presses the button on the back of the bridge: run `python -m home_events.flumes.lutron pair` on the box (as root, with `/etc/home-events/env` loaded). It stores the certificate in SSM itself.
+- **Lennox S30** (optional, needs the WireGuard tunnel): set `lennox/host` to the thermostat's LAN address. Its local API has no authentication; the flume only subscribes and reads, never publishes.
 
 ```bash
 # 0. The box deploys the latest GitHub release, so publish one first
