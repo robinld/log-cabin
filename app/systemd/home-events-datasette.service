@@ -1,5 +1,5 @@
 [Unit]
-Description=Datasette (localhost only; reach it with scripts/dashboard.sh)
+Description=Datasette (read-only; reach it over SSM with scripts/dashboard.sh, or from the home LAN over WireGuard)
 After=network-online.target
 Wants=network-online.target
 RequiresMountsFor=/data
@@ -9,7 +9,7 @@ StartLimitIntervalSec=0
 User=homeevents
 EnvironmentFile=/etc/home-events/env
 Environment=PYTHONPATH=/opt/home-events/app PYTHONUNBUFFERED=1
-ExecStart=/opt/home-events/venv/bin/datasette serve ${DB_PATH} -h 127.0.0.1 -p 8001 -m /opt/home-events/app/datasette/metadata.json --setting sql_time_limit_ms 5000
+ExecStart=/opt/home-events/venv/bin/datasette serve ${DB_PATH} -h 0.0.0.0 -p 8001 -m /opt/home-events/app/datasette/metadata.json --setting sql_time_limit_ms 5000
 Restart=always
 RestartSec=30
 
