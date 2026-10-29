@@ -15,6 +15,9 @@ dnf install -y "$PY" "$PY-pip" sqlite amazon-ssm-agent wireguard-tools
 id homeevents >/dev/null 2>&1 || useradd --system --home-dir "$ROOT" --shell /sbin/nologin homeevents
 mountpoint -q /data
 chown homeevents:homeevents /data
+# A replacement box can give homeevents a different uid than the one that
+# wrote the database, so own the database files too, not just the directory.
+find /data -maxdepth 1 -name 'events.db*' -exec chown homeevents:homeevents {} +
 
 # --- Python ---------------------------------------------------------------
 [ -x "$VENV/bin/python" ] || "$PY" -m venv "$VENV"
