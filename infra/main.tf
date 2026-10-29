@@ -36,6 +36,44 @@ data "aws_subnets" "default" {
   }
 }
 
+# IPv6 alongside IPv4. AWS charges for public IPv4 addresses but not IPv6,
+# so the box can reach anything that speaks IPv6 (SSM's dual-stack endpoints,
+# package repos) and may one day drop IPv4. The default VPC, its subnet and
+# its route table predate this config; the subnet is adopted, not created,
+# and removing it here leaves it in place.
+resource "aws_vpc_ipv6_cidr_block_association" "default" {
+  vpc_id                           = data.aws_vpc.default.id
+  assign_generated_ipv6_cidr_block = true
+}
+
+resource "aws_default_subnet" "box" {
+  availability_zone               = data.aws_subnet.box.availability_zone
+  ipv6_cidr_block                 = cidrsubnet(aws_vpc_ipv6_cidr_block_association.default.ipv6_cidr_block, 8, 0)
+  map_public_ip_on_launch         = true
+  assign_ipv6_address_on_creation = false
+}
+
+data "aws_internet_gateway" "default" {
+  filter {
+    name   = "attachment.vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
+
+data "aws_route_table" "main" {
+  vpc_id = data.aws_vpc.default.id
+  filter {
+    name   = "association.main"
+    values = ["true"]
+  }
+}
+
+resource "aws_route" "ipv6_default" {
+  route_table_id              = data.aws_route_table.main.id
+  destination_ipv6_cidr_block = "::/0"
+  gateway_id                  = data.aws_internet_gateway.default.id
+}
+
 # No ingress rules at all. Shell and dashboard access both go through SSM
 # Session Manager, whose agent dials out.
 resource "aws_security_group" "box" {
@@ -49,6 +87,13 @@ resource "aws_security_group" "box" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    ipv6_cidr_blocks = ["::/0"]
   }
 }
 
@@ -131,6 +176,7 @@ resource "aws_instance" "box" {
   # No NAT gateway (~$33/mo), so the box needs a public IPv4 for egress
   # (~$3.60/mo). The security group still allows no inbound traffic.
   associate_public_ip_address = true
+  ipv6_address_count          = 1
 
   # "unlimited" (the T4g default) bills surplus CPU credits; "standard" just
   # throttles. This workload idles, so throttling is the safer failure.
