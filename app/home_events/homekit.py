@@ -12,7 +12,10 @@ with the user code stored in SSM (evl/user_code). Without it the bridge is
 read-only and the Home app's controls spring back. A change that the panel
 hasn't shown within PENDING_S springs back too. HomeKit has no "not ready to
 arm" state, so while the panel is disarmed and not ready the Alarm shows Off
-with its fault flag raised, and arming springs back without being sent.
+with its fault flag raised, and arming springs back without being sent. Home
+doesn't display fault flags, so a door sensor the panel has lost contact with
+(RF supervision, which also blocks arming) is shown as open: that Home does
+show. Motion sensors aren't, since motion would set off automations.
 
 HomeKit finds accessories by Bonjour on the home LAN. The bridge advertises on
 a dummy interface (mdns0, set up by install.sh), and home_events.mdns_relay
@@ -52,7 +55,8 @@ TARGET_ACTIONS = {STAY: "stay", AWAY: "away", DISARMED: "disarm"}
 
 # Contact ID event codes (the panel's %03 reports) that set a zone's flags.
 FIRE_ALARMS = {f"11{d}" for d in range(10)}
-TROUBLES = {"373", "381", "383"}  # fire trouble, RF supervision lost, tamper
+SUPERVISION_LOST = "381"
+TROUBLES = {"373", SUPERVISION_LOST, "383"}  # fire trouble, RF supervision lost, tamper
 LOW_BATTERY = "384"
 
 
@@ -295,6 +299,7 @@ class AlarmBridge(Bridge):
         is_open = open_zones(row[0]) if row else set()
         low = {int(z) for k, z in screens if k == "LOBAT" and z}
         trouble = {int(z) for k, z in screens if k == "CHECK" and z}
+        lost = set(trouble)
         fire = set()
         for code, zone, q, _ in reports:
             if q != "1":
@@ -303,10 +308,14 @@ class AlarmBridge(Bridge):
                 low.add(zone)
             elif code in TROUBLES:
                 trouble.add(zone)
+                if code == SUPERVISION_LOST:
+                    lost.add(zone)
             elif code in FIRE_ALARMS:
                 fire.add(zone)
         for zone, acc in self.zones.items():
-            active = zone in fire if acc.kind == "SmokeSensor" else zone in is_open
+            active = (zone in fire if acc.kind == "SmokeSensor"
+                      else zone in is_open or zone in lost if acc.kind == "ContactSensor"
+                      else zone in is_open)
             acc.update(active, zone in low, zone in trouble)
 
 
