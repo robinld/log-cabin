@@ -1,0 +1,18 @@
+[Unit]
+Description=HomeKit bridge for the alarm panel (arm, disarm and chime with the stored user code, if set)
+After=network-online.target home-events-mdns0.service home-events-evl.service
+Wants=network-online.target
+Requires=home-events-mdns0.service
+RequiresMountsFor=/data
+StartLimitIntervalSec=0
+
+[Service]
+User=homeevents
+EnvironmentFile=/etc/home-events/env
+Environment=PYTHONPATH=/opt/home-events/app PYTHONUNBUFFERED=1
+ExecStart=/opt/home-events/venv/bin/python -m home_events.homekit
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

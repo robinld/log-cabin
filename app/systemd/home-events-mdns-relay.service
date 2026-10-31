@@ -1,0 +1,17 @@
+[Unit]
+Description=Bonjour relay for the HomeKit bridge (box side; the LAN side runs at home)
+After=network-online.target home-events-mdns0.service
+Wants=network-online.target
+Requires=home-events-mdns0.service
+StartLimitIntervalSec=0
+
+[Service]
+User=homeevents
+EnvironmentFile=/etc/home-events/env
+Environment=PYTHONPATH=/opt/home-events/app PYTHONUNBUFFERED=1
+ExecStart=/opt/home-events/venv/bin/python -m home_events.mdns_relay box
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Dummy interface where the HomeKit bridge advertises (mdns0), for the Bonjour relay
+Before=home-events-homekit.service home-events-mdns-relay.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'ip link show mdns0 >/dev/null 2>&1 || ip link add mdns0 type dummy'
+ExecStart=/usr/sbin/ip addr replace 169.254.53.1/32 dev mdns0
+ExecStart=/usr/sbin/ip link set mdns0 multicast on up
+ExecStart=/usr/sbin/ip route replace 224.0.0.251/32 dev mdns0
+
+[Install]
+WantedBy=multi-user.target

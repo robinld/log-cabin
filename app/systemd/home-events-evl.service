@@ -1,5 +1,5 @@
 [Unit]
-Description=EnvisaLink alarm panel flume (plus chime, arm stay and disarm, with the user's code)
+Description=EnvisaLink alarm panel flume (plus chime, arm stay, arm away and disarm, with the user's code)
 After=network-online.target
 Wants=network-online.target
 RequiresMountsFor=/data

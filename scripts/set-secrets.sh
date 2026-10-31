@@ -6,7 +6,12 @@ set -euo pipefail
 REGION=${REGION:-us-west-2}
 NAME=${NAME:-log-cabin}
 
-for p in yolink/uaid yolink/secret evl/host evl/password protect/api_key lutron/host lennox/host; do
+# evl/user_code is a 4-digit alarm code for the HomeKit bridge, which sends it
+# with each change made in the Home app; without it the bridge is read-only.
+# homekit/relay_peer is the LAN address of the machine running the LAN side of
+# home_events/mdns_relay.py.
+for p in yolink/uaid yolink/secret evl/host evl/password evl/user_code protect/api_key lutron/host lennox/host \
+         homekit/relay_peer; do
   read -rsp "/$NAME/$p (blank to skip): " value; echo
   [ -z "$value" ] && continue
   aws ssm put-parameter --region "$REGION" --name "/$NAME/$p" --type SecureString \

@@ -56,7 +56,8 @@ PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.wireguard
 # --- systemd --------------------------------------------------------------
 install -m 644 "$SRC"/systemd/* /etc/systemd/system/
 systemctl daemon-reload
-for unit in home-events-yolink home-events-evl home-events-unifi home-events-lutron home-events-lennox home-events-datasette; do
+for unit in home-events-yolink home-events-evl home-events-unifi home-events-lutron home-events-lennox home-events-datasette \
+            home-events-mdns0 home-events-mdns-relay home-events-homekit; do
   systemctl enable "$unit.service"
   systemctl restart "$unit.service"
 done
