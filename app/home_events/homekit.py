@@ -94,6 +94,14 @@ def wg_address():
     return re.search(r"inet (\S+)/", out)[1]
 
 
+def named_service(acc, kind, chars=()):
+    """A service carrying the accessory's name, which Home shows on the tile
+    (without it, a bridged sensor is just "Contact Sensor")."""
+    s = acc.add_preload_service(kind, chars=[*chars, "Name"])
+    s.configure_char("Name", value=acc.display_name)
+    return s
+
+
 class Pending:
     """A change sent from HomeKit, waiting for the panel to show it."""
 
@@ -128,7 +136,7 @@ class Alarm(Accessory):
         self.send = send
         self.pending = Pending()
         self.ready = True
-        s = self.add_preload_service("SecuritySystem", chars=["StatusFault"])
+        s = named_service(self, "SecuritySystem", ["StatusFault"])
         self.current = s.configure_char("SecuritySystemCurrentState", value=DISARMED)
         self.not_ready = s.configure_char("StatusFault", value=0)
         self.target = s.configure_char(
@@ -169,7 +177,7 @@ class Chime(Accessory):
         self.send = send
         self.pending = Pending()
         self.panel = None  # the chime as the panel last showed it
-        self.on = self.add_preload_service("Switch").configure_char(
+        self.on = named_service(self, "Switch").configure_char(
             "On", value=False, setter_callback=self.set_on)
 
     def set_on(self, value):
@@ -191,7 +199,7 @@ class Zone(Accessory):
         self.kind = kind
         char = {"MotionSensor": "MotionDetected", "ContactSensor": "ContactSensorState",
                 "SmokeSensor": "SmokeDetected"}[kind]
-        s = self.add_preload_service(kind, chars=["StatusLowBattery", "StatusFault"])
+        s = named_service(self, kind, ["StatusLowBattery", "StatusFault"])
         self.state = s.configure_char(char, value=False if kind == "MotionSensor" else 0)
         self.low_battery = s.configure_char("StatusLowBattery", value=0)
         self.fault = s.configure_char("StatusFault", value=0)
