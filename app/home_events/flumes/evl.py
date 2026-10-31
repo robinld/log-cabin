@@ -5,8 +5,9 @@ tunnel, and appends every line it sends to the log table, as sent. Zones,
 open intervals and troubles are derived at query time by the views in db.py.
 
 It sends ^02 (dump zone timers) every 30 s, which also keeps the session
-alive. The only other command is ^03 (keypresses), and only as one of ACTIONS:
-a user code followed by one key. Raw keys are never accepted, so nothing here
+alive. The only other command is ^03 (a keypress), and only to send one of
+ACTIONS: a user code followed by one key, one key per ^03, each acknowledged
+before the next. Raw keys are never accepted, so nothing here
 can reach installer programming.
 
 Actions come from a small HTTP server on 127.0.0.1:ACTION_PORT; publishing it
@@ -43,6 +44,7 @@ ACTIONS = {"chime": "9", "stay": "3", "disarm": "1"}
 ACTION_LABELS = {"chime": "Chime toggled", "stay": "Arm stay", "disarm": "Disarm"}
 ACTION_GAP_S = 3  # at most one action this often,
 ACTION_LIMIT, ACTION_WINDOW_S = 5, 600  # and this many per window
+KEY_ACK_TIMEOUT_S = 3
 CODE = re.compile(r"\d{4}")
 
 KINDS = {"%00": "keypad", "%01": "zone_state", "%02": "partition_state",
@@ -82,11 +84,14 @@ class Flume:
         self.writer = None  # the live session, for actions
         self.leds = None  # latest keypad LED bits
         self.action_times = []
+        self.key_ack = None  # future for the pending ^03's reply
 
     def store(self, line):
         if line.startswith("^"):
-            # Ack for our ^02, "^02,00$". Anything but 00 is an error code.
-            if line[4:6] != "00":
+            # Ack for our ^02 or ^03, e.g. "^02,00$". Anything but 00 is an error code.
+            if line.startswith("^03,") and self.key_ack and not self.key_ack.done():
+                self.key_ack.set_result(line[4:6])
+            elif line[4:6] != "00":
                 log.warning("EVL rejected a command: %s", line)
             return
         if line.startswith("%00,"):
@@ -165,8 +170,17 @@ class Flume:
         if len(self.action_times) >= ACTION_LIMIT:
             return f"limit is {ACTION_LIMIT} actions per {ACTION_WINDOW_S // 60} minutes; try again later"
         self.action_times.append(now)
-        self.writer.write(f"^03,1,{code}{ACTIONS[action]}$\r\n".encode())
-        await self.writer.drain()
+        for i, key in enumerate(code + ACTIONS[action]):
+            self.key_ack = asyncio.get_running_loop().create_future()
+            self.writer.write(f"^03,1,{key}$\r\n".encode())
+            await self.writer.drain()
+            try:
+                ack = await asyncio.wait_for(self.key_ack, KEY_ACK_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                ack = "no reply"
+            if ack != "00":
+                log.warning("%s: key %d of %d not accepted (%s)", action, i + 1, len(code) + 1, ack)
+                return f"the alarm panel didn't accept the keys ({ack})"
         log.info("sent %s", action)  # never the code
         db.append(self.conn, source="evl", event_type="action", event_name=action,
                   body=f"{ACTION_LABELS[action]} from /home")
