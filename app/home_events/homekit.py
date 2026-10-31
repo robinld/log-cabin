@@ -44,7 +44,6 @@ ACTIONS_URL = "http://127.0.0.1:8002"
 MDNS_IP = "169.254.53.1"  # mdns0, see install.sh
 PORT = 51827
 POLL_S = 2
-ZONES_EVERY_S = 300  # look for newly named zones this often
 PENDING_S = 20  # how long the panel gets to show a change sent from HomeKit
 TROUBLE_WINDOW_S = 120  # the keypad cycles through its trouble screens well within this
 
@@ -227,21 +226,42 @@ class AlarmBridge(Bridge):
         self.add_accessory(self.alarm)
         self.add_accessory(self.chime)
         self.zones = {}
-        self.zones_checked = 0
-        self.add_zones()
+        self.add_zones(self.known_zones())
 
     def db(self):
         return sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True, timeout=5)
 
-    def add_zones(self):
-        """Add a sensor for each zone not seen before; True if any were added."""
+    def known_zones(self):
+        """Every zone the log has ever named, read once at start."""
         with self.db() as c:
+            self.seen_id = c.execute("select coalesce(max(id), 0) from log").fetchone()[0]
             names = dict(c.execute("select zone, name from alarm_zones"))
             # Fire zones show up in Contact ID reports, even when the keypad never names them.
             for (z,) in c.execute("""select distinct cast(substr(body, 11, 3) as integer) from log
                                      where source = 'evl' and event_type = 'cid'
                                      and (substr(body, 6, 2) = '11' or substr(body, 6, 3) = '373')"""):
                 names.setdefault(z, f"Fire Zone {z}")
+        return names
+
+    def new_zones(self, c):
+        """Zones named in the log since the last poll: a keypad screen naming a
+        zone ("FAULT 19 BEDROOM3 DOOR"), or a fire report for one."""
+        names = {}
+        for rid, kind, zone, body in c.execute(
+                """select id, event_type, device_id, body from log where id > ? and source = 'evl'
+                   and ((event_type = 'keypad' and device_id is not null) or event_type = 'cid')
+                   order by id""", (self.seen_id,)):
+            self.seen_id = rid
+            if kind == "keypad":
+                words = body[:-1].split(",", 5)[-1].split()
+                if len(words) > 2:
+                    names.setdefault(int(zone), " ".join(words[2:]))
+            elif body[5:7] == "11" or body[5:8] == "373":
+                names.setdefault(int(body[10:13]), f"Fire Zone {int(body[10:13])}")
+        return names
+
+    def add_zones(self, names):
+        """Add a sensor for each zone not seen before; True if any were added."""
         added = False
         for zone, name in sorted(names.items()):
             if zone in self.zones or not zone:
@@ -280,11 +300,6 @@ class AlarmBridge(Bridge):
 
     @Accessory.run_at_interval(POLL_S)
     async def run(self):
-        if time.time() - self.zones_checked > ZONES_EVERY_S:
-            self.zones_checked = time.time()
-            if self.add_zones():
-                self.driver.config_changed()
-
         st = {}
         try:
             with urllib.request.urlopen(ACTIONS_URL + "/status", timeout=2) as r:
@@ -297,6 +312,8 @@ class AlarmBridge(Bridge):
 
         since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - TROUBLE_WINDOW_S))
         with self.db() as c:
+            if self.add_zones(self.new_zones(c)):
+                self.driver.config_changed()
             row = c.execute("""select body from log where source = 'evl'
                                and event_type = 'zone_state' order by id desc limit 1""").fetchone()
             screens = c.execute("""select distinct event_name, device_id from log

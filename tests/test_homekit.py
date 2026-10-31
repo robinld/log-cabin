@@ -162,3 +162,20 @@ def test_ready_closes_every_zone_unless_one_is_bypassed(setup):
     actions.panel["bypass"] = False
     poll(b)
     assert b.zones[10].state.value == 0
+
+
+def test_a_zone_is_added_as_soon_as_the_keypad_names_it(setup):
+    _, add, bridge = setup
+    b = bridge()
+    changed = []
+    b.driver.config_changed = lambda: changed.append(True)
+    poll(b)
+    assert 19 not in b.zones and changed == []
+    add("keypad", "%00,01,0008,19,00,FAULT 19 BEDROOM3 DOOR          $", "FAULT", "19")
+    add("cid", "%03,1373010080$")  # fire trouble, zone 8
+    poll(b)
+    assert (b.zones[19].display_name, b.zones[19].kind) == ("Bedroom3 Door", "ContactSensor")
+    assert b.zones[8].kind == "SmokeSensor"
+    assert changed == [True]
+    poll(b)
+    assert changed == [True]  # nothing new
