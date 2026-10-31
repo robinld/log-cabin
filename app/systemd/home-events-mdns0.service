@@ -3,6 +3,7 @@ Description=Dummy interface where the HomeKit bridge advertises (mdns0), for the
 Before=home-events-homekit.service home-events-mdns-relay.service
 
 [Service]
+# 169.254.53.1 is MDNS_IP in home_events/mdns_relay.py.
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c 'ip link show mdns0 >/dev/null 2>&1 || ip link add mdns0 type dummy'

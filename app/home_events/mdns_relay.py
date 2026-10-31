@@ -17,9 +17,11 @@ HomeKit itself (HAP) then connects to the bridge directly over the tunnel.
 
 import hashlib
 import logging
+import re
 import select
 import socket
 import struct
+import subprocess
 import sys
 import time
 
@@ -27,10 +29,17 @@ log = logging.getLogger("mdns_relay")
 
 GROUP, MDNS_PORT = "224.0.0.251", 5353
 PORT = 1900
-MDNS_IP = "169.254.53.1"  # mdns0, see install.sh
+MDNS_IP = "169.254.53.1"  # mdns0, where the bridge advertises; also in home-events-mdns0.service
 KEEP = (b"_hap", b"logcabin", b"LogCabin", b"Log Cabin", b"Log-Cabin", b"log-cabin")
 ECHO_S = 5  # ignore our own re-multicasts this long
 IP_MULTICAST_ALL = 49  # Linux
+
+
+def wg_address():
+    """The box's WireGuard address: where the LAN reaches the bridge and the relay."""
+    out = subprocess.run(["ip", "-4", "-o", "addr", "show", "dev", "wg0"],
+                         capture_output=True, text=True, check=True).stdout
+    return re.search(r"inet (\S+)/", out)[1]
 
 
 def multicast_socket(local_ip, only_this_interface):
@@ -149,7 +158,6 @@ def main():
     side = sys.argv[1] if len(sys.argv) > 1 else ""
     if side == "box":
         from . import config
-        from .homekit import wg_address
         config.setup_logging()
         peer = config.param("homekit/relay_peer")
         listen_ip = wg_address()

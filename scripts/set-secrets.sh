@@ -10,7 +10,7 @@ NAME=${NAME:-log-cabin}
 # with each change made in the Home app; without it the bridge is read-only.
 # homekit/relay_peer is the LAN address of the machine running the LAN side of
 # home_events/mdns_relay.py.
-for p in yolink/uaid yolink/secret evl/host evl/password evl/user_code protect/api_key lutron/host lennox/host \
+for p in yolink/uaid yolink/secret evl/host evl/password evl/user_code lutron/host lennox/host \
          homekit/relay_peer; do
   read -rsp "/$NAME/$p (blank to skip): " value; echo
   [ -z "$value" ] && continue

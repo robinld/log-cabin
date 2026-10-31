@@ -3,7 +3,7 @@
 Presents the panel as a HomeKit Security System (Off, Home = Stay, Away), the
 chime as a switch, and each zone as a contact, motion or smoke sensor, with
 low battery and trouble as its status flags. State comes from the EVL flume's
-action server (GET /status on 127.0.0.1:8002) and zones from the log: names
+action server (GET /status) and zones from the log: names
 from the keypad, open zones from the latest zone dump, and troubles from the
 panel's Contact ID reports (plus the keypad's CHECK and LOBAT screens).
 
@@ -27,7 +27,6 @@ import logging
 import os
 import re
 import sqlite3
-import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -37,11 +36,12 @@ from pyhap.accessory_driver import AccessoryDriver
 from pyhap.const import CATEGORY_ALARM_SYSTEM, CATEGORY_BRIDGE, CATEGORY_SENSOR, CATEGORY_SWITCH
 
 from . import config
+from .flumes.evl import ACTION_PORT
+from .mdns_relay import MDNS_IP, wg_address
 
 log = logging.getLogger("homekit")
 
-ACTIONS_URL = "http://127.0.0.1:8002"
-MDNS_IP = "169.254.53.1"  # mdns0, see install.sh
+ACTIONS_URL = f"http://127.0.0.1:{ACTION_PORT}"
 PORT = 51827
 POLL_S = 2
 PENDING_S = 20  # how long the panel gets to show a change sent from HomeKit
@@ -84,13 +84,6 @@ def user_code():
             raise
         return None
     return code if re.fullmatch(r"\d{4}", code) else None
-
-
-def wg_address():
-    """The box's WireGuard address: where the LAN reaches the bridge."""
-    out = subprocess.run(["ip", "-4", "-o", "addr", "show", "dev", "wg0"],
-                         capture_output=True, text=True, check=True).stdout
-    return re.search(r"inet (\S+)/", out)[1]
 
 
 def named_service(acc, kind, chars=()):

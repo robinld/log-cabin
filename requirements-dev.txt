@@ -1,2 +1,2 @@
+-r app/requirements.txt
 pytest>=8,<9
-HAP-python>=5,<6

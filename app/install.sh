@@ -16,8 +16,9 @@ id homeevents >/dev/null 2>&1 || useradd --system --home-dir "$ROOT" --shell /sb
 mountpoint -q /data
 chown homeevents:homeevents /data
 # A replacement box can give homeevents a different uid than the one that
-# wrote the database, so own the database files too, not just the directory.
-find /data -maxdepth 1 -name 'events.db*' -exec chown homeevents:homeevents {} +
+# wrote the files, so own the database and the HomeKit pairing too, not just
+# the directory.
+find /data -maxdepth 1 \( -name 'events.db*' -o -name 'homekit.state' \) -exec chown homeevents:homeevents {} +
 
 # --- Tailscale --------------------------------------------------------------
 # Lets chosen tailnet devices (an assistant, a phone) reach Datasette; the
@@ -29,11 +30,6 @@ dnf install -y tailscale
 systemctl enable --now tailscaled.service
 # SSM is the only way in, so nothing needs SSH listening.
 systemctl disable --now sshd.service 2>/dev/null || true
-# Alarm actions are for the HomeKit bridge on this box only: take down the
-# /alarm path that earlier versions published.
-if tailscale status >/dev/null 2>&1; then
-  tailscale serve --set-path /alarm off >/dev/null 2>&1 || true
-fi
 
 # --- Python ---------------------------------------------------------------
 [ -x "$VENV/bin/python" ] || "$PY" -m venv "$VENV"

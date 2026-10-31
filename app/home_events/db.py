@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS log (
     id          INTEGER PRIMARY KEY,
     received_at TEXT NOT NULL,          -- when the box got it, ISO-8601 UTC
     ts          TEXT NOT NULL,          -- when it happened if the source says, else received_at
-    source      TEXT NOT NULL,          -- yolink | evl | protect
+    source      TEXT NOT NULL,          -- yolink | evl | unifi | lutron | lennox
     event_type  TEXT NOT NULL,          -- what kind of thing: DoorSensor, keypad, zone_timers
     event_name  TEXT,                   -- what happened: Alert, getState, FAULT
     device_id   TEXT,                   -- YoLink deviceId, alarm zone number
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS log (
 CREATE INDEX IF NOT EXISTS log_ts ON log(ts);
 CREATE INDEX IF NOT EXISTS log_source_type ON log(source, event_type, id);
 CREATE INDEX IF NOT EXISTS log_device ON log(device_id, id);
+CREATE INDEX IF NOT EXISTS log_named ON log(source, event_type, event_name, device_id, id);
 """
 
 # Views are recreated on every init so edits here take effect on deploy.
@@ -130,10 +131,17 @@ FROM z WHERE zone > 0;
 
 DROP VIEW IF EXISTS alarm_zones;
 CREATE VIEW alarm_zones AS
--- Zone names as the keypad last showed them.
-SELECT zone, name, max(received_at) AS last_named
-FROM alarm_keypad_zones WHERE name <> ''
-GROUP BY zone;
+-- Zone names as the keypad last showed them. The newest naming screen per zone
+-- comes from the stored columns (log_named), so only those few rows are parsed.
+WITH latest AS (
+    SELECT max(id) AS id FROM log
+    WHERE source = 'evl' AND event_type = 'keypad' AND device_id IS NOT NULL
+      AND event_name IN ('FAULT', 'CHECK', 'LOBAT', 'BYPAS', 'ALARM')
+    GROUP BY device_id
+)
+SELECT z.zone, z.name, z.received_at AS last_named
+FROM latest JOIN alarm_keypad_zones z ON z.id = latest.id
+WHERE z.name <> '';
 
 DROP VIEW IF EXISTS alarm_zone_seen;
 CREATE VIEW alarm_zone_seen AS
@@ -195,10 +203,6 @@ WHERE (text LIKE '%BAT%' OR text LIKE '%AC LOSS%' OR text LIKE '%FAIL%' OR text 
 GROUP BY text;
 """
 
-# Tables from before everything moved into `log` (v0.2.x).
-OLD_TABLES = ("events", "devices", "device_state", "heartbeats", "alarm_messages")
-
-
 def iso(ts_ms=None):
     """Milliseconds since epoch (default: now) -> ISO-8601 UTC string."""
     if ts_ms is None:
@@ -220,7 +224,6 @@ def connect(path=None):
 
 def init(conn):
     conn.executescript(SCHEMA)
-    migrate_old_tables(conn)
     conn.executescript(VIEWS)
 
 
@@ -235,49 +238,6 @@ def append(conn, *, source, event_type, event_name, body, ts_ms=None, device_id=
         (now, now if ts_ms is None else iso(ts_ms), source, event_type, event_name,
          device_id, body),
     )
-
-
-def migrate_old_tables(conn):
-    """Copy rows from the v0.2.x tables into `log`, then drop those tables.
-
-    devices, device_state and heartbeats were derived, so they are dropped
-    without copying: the YoLink flume re-fetches the device list on start.
-    """
-    from .flumes.evl import evl_fields
-
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        if not tables & set(OLD_TABLES):
-            conn.execute("COMMIT")
-            return
-        rows = []
-        if "events" in tables:
-            for r in conn.execute("SELECT * FROM events"):
-                if r["source"] == "yolink_poll":
-                    etype, ename = r["event_type"].removesuffix(".poll_change"), "getState"
-                    body = json.dumps(json.loads(r["payload"]).get("data"), separators=(",", ":"))
-                else:
-                    etype, _, ename = r["event_type"].partition(".")
-                    body = r["payload"]
-                rows.append((r["received_at"], r["ts"], "yolink", etype, ename or None,
-                             r["device_id"], body))
-        if "alarm_messages" in tables:
-            for r in conn.execute("SELECT * FROM alarm_messages"):
-                line = r["data"] if r["code"] == "?" else f"{r['code']},{r['data']}$"
-                etype, ename, zone = evl_fields(line)
-                rows.append((r["received_at"], r["received_at"], "evl", etype, ename, zone, line))
-        rows.sort(key=lambda row: row[0])
-        conn.executemany(
-            """INSERT INTO log (received_at, ts, source, event_type, event_name, device_id, body)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""", rows)
-        for t in OLD_TABLES:
-            conn.execute(f"DROP TABLE IF EXISTS {t}")
-        conn.execute("COMMIT")
-        print(f"migrated {len(rows)} rows into log; dropped {', '.join(sorted(tables & set(OLD_TABLES)))}")
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
 
 
 if __name__ == "__main__":

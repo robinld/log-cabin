@@ -12,7 +12,6 @@ locals {
     wireguard_conf = "wireguard/conf"
     evl_host       = "evl/host"
     evl_password   = "evl/password"
-    protect_key    = "protect/api_key"
     lutron_host    = "lutron/host"
     lutron_certs   = "lutron/certs"
     lennox_host    = "lennox/host"

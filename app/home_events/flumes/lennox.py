@@ -68,18 +68,30 @@ def lennox_fields(msg):
             ",".join(sorted(data)) if isinstance(data, dict) and data else None)
 
 
-def repeat_key(event_name, msg):
-    """What makes two messages "the same" for the repeat window."""
-    if event_name in REPEAT_EVERY_S_BY_SECTION:
-        return event_name
+def without_clocks(o):
+    if isinstance(o, dict):
+        return {k: without_clocks(v) for k, v in o.items() if k not in CLOCK_FIELDS}
+    if isinstance(o, list):
+        return [without_clocks(v) for v in o]
+    return o
 
-    def without_clocks(o):
-        if isinstance(o, dict):
-            return {k: without_clocks(v) for k, v in o.items() if k not in CLOCK_FIELDS}
-        if isinstance(o, list):
-            return [without_clocks(v) for v in o]
-        return o
-    return json.dumps(without_clocks(msg), sort_keys=True)
+
+def shape(o):
+    """A message's fields and item ids without their values: what it updates."""
+    if isinstance(o, dict):
+        return {k: v if k == "id" else shape(v) for k, v in o.items() if k not in CLOCK_FIELDS}
+    if isinstance(o, list):
+        return [shape(v) for v in o]
+    return None
+
+
+def repeat_key(event_name, msg):
+    """(what a message updates, what it says). A message is a repeat when the
+    last one stored that updates the same things said the same."""
+    if event_name in REPEAT_EVERY_S_BY_SECTION:
+        return event_name, None  # kept on a timer, whatever they say
+    return (json.dumps(shape(msg), sort_keys=True),
+            json.dumps(without_clocks(msg), sort_keys=True))
 
 
 class Flume:
@@ -87,21 +99,22 @@ class Flume:
         self.conn = conn
         self.base = f"https://{host}"
         self.http = httpx.AsyncClient(verify=ssl_context(), timeout=LONG_POLL_S + 30)
-        self.last_stored = {}  # repeat_key -> time stored
+        self.last_stored = {}  # shape -> (content, time stored)
 
     def store(self, msg, now=None):
         now = time.time() if now is None else now
         event_type, event_name = lennox_fields(msg)
-        key = repeat_key(event_name, msg)
+        key, content = repeat_key(event_name, msg)
         window = REPEAT_EVERY_S_BY_SECTION.get(event_name, REPEAT_EVERY_S)
-        if now - self.last_stored.get(key, -window) < window:
+        last_content, last_time = self.last_stored.get(key, (None, -window))
+        if content == last_content and now - last_time < window:
             return False
         db.append(self.conn, source="lennox", event_type=event_type,
                   event_name=event_name, body=msg)
         # Forget anything older than the longest window, so this stays small.
         longest = max(REPEAT_EVERY_S, *REPEAT_EVERY_S_BY_SECTION.values())
-        self.last_stored = {k: t for k, t in self.last_stored.items() if now - t < longest}
-        self.last_stored[key] = now
+        self.last_stored = {k: v for k, v in self.last_stored.items() if now - v[1] < longest}
+        self.last_stored[key] = (content, now)
         return True
 
     async def session(self):
