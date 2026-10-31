@@ -11,12 +11,14 @@
     --bg: #f2f2f7; --card: #ffffff; --text: #1c1c1e; --muted: #6e6e73; --line: #e5e5ea;
     --ok: #1f9d55; --warn: #c27c0e; --bad: #d1342f; --info: #2f6fdb;
     --ok-bg: #e6f6ec; --warn-bg: #fdf3e1; --bad-bg: #fdeaea; --info-bg: #e8f0fd;
+    --fill: rgba(120,120,128,.16); --card-raised: #ffffff; --sheet: rgba(242,242,247,.92);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #000000; --card: #1c1c1e; --text: #f2f2f7; --muted: #98989f; --line: #2c2c2e;
       --ok: #34c759; --warn: #ffb340; --bad: #ff5a52; --info: #5e9cff;
       --ok-bg: #12301c; --warn-bg: #3a2a0c; --bad-bg: #3d1513; --info-bg: #142540;
+      --fill: rgba(120,120,128,.32); --card-raised: #636366; --sheet: rgba(28,28,30,.92);
     }
   }
   * { box-sizing: border-box; }
@@ -33,7 +35,8 @@
        color: var(--muted); margin: 22px 4px 8px; }
   .card { background: var(--card); border-radius: 14px; overflow: hidden; }
   .row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
-  .row + .row { border-top: 1px solid var(--line); }
+  .row { position: relative; min-height: 44px; }
+  .row + .row::before { content: ""; position: absolute; top: 0; left: 14px; right: 0; border-top: 0.5px solid var(--line); }
   .row .name { flex: 1; min-width: 0; }
   .row .sub { color: var(--muted); font-size: 13px; }
   .row .val { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -69,14 +72,52 @@
   @keyframes flash { from { background: var(--info-bg); } to { background: transparent; } }
   .s-evl { color: var(--bad) !important; } .s-yolink { color: var(--ok) !important; }
   .s-unifi { color: var(--info) !important; } .s-lutron { color: var(--warn) !important; }
-  .ctl { display: flex; gap: 8px; padding: 0 14px 14px; flex-wrap: wrap; }
-  .ctl input { width: 92px; flex: none; font: inherit; font-size: 18px; letter-spacing: 4px; text-align: center;
-               padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); }
-  .ctl button { flex: 1; min-width: 70px; border: 0; border-radius: 10px; padding: 10px 0; font: inherit;
-                font-size: 15px; font-weight: 600; background: var(--info-bg); color: var(--info); cursor: pointer; }
-  .ctl button.danger { background: var(--bad-bg); color: var(--bad); }
-  .ctl button:disabled { opacity: .5; }
-  .ctl-msg { padding: 0 14px 12px; font-size: 13px; color: var(--muted); }
+  /* iOS controls: a switch, a segmented control and a passcode sheet. */
+  html { -webkit-tap-highlight-color: transparent; }
+  button { -webkit-user-select: none; user-select: none; }
+  .switch { position: relative; width: 51px; height: 31px; flex: none; }
+  .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+  .switch span { position: absolute; inset: 0; border-radius: 16px; background: var(--fill); transition: background .25s; }
+  .switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%;
+                        background: #fff; box-shadow: 0 3px 8px rgba(0,0,0,.15), 0 1px 1px rgba(0,0,0,.16); transition: transform .25s; }
+  .switch input:checked + span { background: var(--ok); }
+  .switch input:checked + span::after { transform: translateX(20px); }
+  .switch input:disabled { cursor: default; }
+  .switch input:disabled + span { opacity: .5; }
+  .seg { display: flex; background: var(--fill); border-radius: 9px; padding: 2px; flex: none; }
+  .seg button { border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; font-weight: 500;
+                padding: 5px 16px; border-radius: 7px; cursor: pointer; min-width: 64px; }
+  .seg button[aria-pressed="true"] { background: var(--card-raised); font-weight: 600; box-shadow: 0 3px 8px rgba(0,0,0,.12), 0 3px 1px rgba(0,0,0,.04); }
+  .seg button:disabled { color: var(--muted); cursor: default; }
+  .spin { width: 18px; height: 18px; flex: none; border-radius: 50%; border: 2px solid var(--fill);
+          border-top-color: var(--muted); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .foot { color: var(--muted); font-size: 13px; margin: 7px 16px 0; min-height: 0; }
+  .foot.bad { color: var(--bad); }
+  .sheet-bg { position: fixed; inset: 0; z-index: 10; display: flex; align-items: flex-end; justify-content: center;
+              background: rgba(0,0,0,.35); animation: fade .2s; }
+  .sheet { width: 100%; max-width: 420px; padding: 26px 24px max(20px, env(safe-area-inset-bottom));
+           border-radius: 14px 14px 0 0; text-align: center; background: var(--sheet);
+           -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%);
+           animation: rise .3s cubic-bezier(.2,.9,.3,1); }
+  @keyframes fade { from { opacity: 0; } }
+  @keyframes rise { from { transform: translateY(100%); } }
+  .sheet .t1 { font-size: 20px; font-weight: 600; }
+  .sheet .t2 { color: var(--muted); font-size: 15px; margin-top: 4px; min-height: 20px; }
+  .sheet .t2.bad { color: var(--bad); }
+  .dots { display: flex; gap: 22px; justify-content: center; margin: 22px 0 26px; }
+  .dots i { width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid var(--text); }
+  .dots i.on { background: var(--text); }
+  .dots.shake { animation: shake .4s; }
+  @keyframes shake { 20%, 60% { transform: translateX(-10px); } 40%, 80% { transform: translateX(10px); } }
+  .keys { display: grid; grid-template-columns: repeat(3, 76px); gap: 16px 26px; justify-content: center; }
+  .keys button { width: 76px; height: 76px; border-radius: 50%; border: 0; background: var(--fill); color: var(--text);
+                 font: inherit; font-size: 34px; font-weight: 400; line-height: 1; cursor: pointer; display: flex;
+                 flex-direction: column; align-items: center; justify-content: center; }
+  .keys button small { font-size: 10px; font-weight: 700; letter-spacing: 2px; margin-top: 1px; }
+  .keys button:active { background: var(--muted); }
+  .keys .plain { background: none; font-size: 17px; }
+  .keys .plain:active { background: none; color: var(--muted); }
   [hidden] { display: none !important; }  /* .ctl's display: flex would otherwise win */
 </style>
 </head>
@@ -90,15 +131,18 @@
 
   <section id="status">
   <div class="card"><div class="hero" id="alarm-hero"><span class="dot"></span><div><div class="title">Alarm</div><div class="sub">Loading…</div></div></div>
-    <div class="chips" id="alarm-chips"></div>
-    <form class="ctl" id="alarm-ctl" hidden autocomplete="off">
-      <input id="alarm-code" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4"
-             placeholder="Code" autocomplete="off" aria-label="Alarm code">
-      <button type="button" data-action="chime">Chime</button>
-      <button type="button" data-action="stay">Stay</button>
-      <button type="button" data-action="disarm" class="danger">Disarm</button>
-    </form>
-    <div class="ctl-msg" id="alarm-msg" hidden></div></div>
+    <div class="chips" id="alarm-chips"></div></div>
+  <div id="alarm-ctl" hidden>
+    <div class="card" style="margin-top: 12px">
+      <div class="row"><div class="name">Mode</div><span class="spin" id="mode-spin" hidden></span>
+        <div class="seg" role="group" aria-label="Alarm mode">
+          <button type="button" data-mode="disarmed" aria-pressed="false">Off</button>
+          <button type="button" data-mode="stay" aria-pressed="false">Stay</button></div></div>
+      <div class="row"><div class="name">Chime</div><span class="spin" id="chime-spin" hidden></span>
+        <label class="switch"><input type="checkbox" id="chime" role="switch" aria-label="Chime"><span></span></label></div>
+    </div>
+    <div class="foot" id="alarm-msg"></div>
+  </div>
 
   <h2>Doors</h2><div class="card" id="doors"></div>
   <h2>Temperature</h2><div class="card" id="temps"></div>
@@ -111,6 +155,14 @@
   <section id="live" hidden><div class="card" id="stream"><div class="empty">Loading…</div></div></section>
   <div class="card empty bad" id="error"></div>
 </main>
+<div class="sheet-bg" id="pad" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pad-t1">
+    <div class="t1" id="pad-t1">Enter Alarm Code</div>
+    <div class="t2" id="pad-t2"></div>
+    <div class="dots" id="pad-dots"><i></i><i></i><i></i><i></i></div>
+    <div class="keys" id="pad-keys"></div>
+  </div>
+</div>
 <script>
 const DB = "/events.json";
 
@@ -251,6 +303,7 @@ async function render() {
 
   $("updated").textContent = "Updated " + clock(new Date());
   $("error").style.display = "none";
+  if (!alarm.pending) alarmControls();
 }
 
 // --- Live: new events, one line each, newest first. Repeats are dropped: the
@@ -392,48 +445,116 @@ $("stream").addEventListener("click", (e) => {
   row.classList.toggle("open", live.open.has(id));
 });
 
-// --- Alarm actions, at /alarm where the box publishes them (not over the LAN),
-// so elsewhere the controls stay hidden. The code is sent with each action and
-// never kept, here or on the box.
+// --- Alarm controls, at /alarm where the box publishes them (not over the LAN),
+// so elsewhere they stay hidden. They show the panel's state as the flume last
+// saw it. Changing one asks for the alarm code, which goes with that one
+// request and is never kept, here or on the box.
 const ALARM = "/alarm";
-const CONFIRM = {stay: "Arm the alarm in Stay mode?", disarm: "Disarm the alarm?"};
+const alarm = {status: null, pending: null};  // pending: {what, done(status), until}
+
+async function fetchAlarm() {
+  const r = await fetch(ALARM + "/status", {cache: "no-store"});
+  if (!r.ok) throw new Error("status " + r.status);
+  return r.json();
+}
+
+function drawControls() {
+  const st = alarm.status, p = alarm.pending;
+  $("alarm-ctl").hidden = !st;
+  if (!st) return;
+  const busy = !!p || !st.connected;
+  for (const b of document.querySelectorAll(".seg button")) {
+    b.setAttribute("aria-pressed", String(st.state === b.dataset.mode));
+    b.disabled = busy || (b.dataset.mode === "stay" && st.state === "disarmed" && !st.ready);
+  }
+  $("chime").checked = p?.what === "chime" ? !st.chime : !!st.chime;
+  $("chime").disabled = busy || st.state !== "disarmed";
+  $("mode-spin").hidden = p?.what !== "mode";
+  $("chime-spin").hidden = p?.what !== "chime";
+  if (!p && !$("alarm-msg").classList.contains("bad")) {
+    $("alarm-msg").textContent = !st.connected ? "Not connected to the alarm panel."
+      : st.state === "disarmed" && !st.ready ? "Close all doors to arm."
+      : st.state === "away" ? "Armed away. Choose Off to disarm."
+      : st.state === "alarm" ? "ALARM. Choose Off to disarm." : "";
+  }
+}
+
+function footer(text, bad = false) {
+  $("alarm-msg").textContent = text;
+  $("alarm-msg").className = "foot" + (bad ? " bad" : "");
+}
 
 async function alarmControls() {
-  try {
-    const r = await fetch(ALARM + "/status", {cache: "no-store"});
-    $("alarm-ctl").hidden = !r.ok;
-  } catch { $("alarm-ctl").hidden = true; }
+  try { alarm.status = await fetchAlarm(); } catch { alarm.status = null; }
+  drawControls();
 }
 
-function alarmMsg(text, cls = "") {
-  $("alarm-msg").textContent = text;
-  $("alarm-msg").className = "ctl-msg " + cls;
-  $("alarm-msg").hidden = !text;
+// Passcode sheet: resolves with the 4 digits, or null if cancelled.
+function askCode(why) {
+  return new Promise((resolve) => {
+    let code = "";
+    const dots = [...$("pad-dots").children];
+    const draw = () => dots.forEach((d, i) => d.classList.toggle("on", i < code.length));
+    $("pad-t2").textContent = why;
+    $("pad-t2").className = "t2";
+    draw();
+    $("pad").hidden = false;
+    const close = (v) => { $("pad").hidden = true; $("pad-keys").onclick = null; resolve(v); };
+    $("pad-keys").onclick = (e) => {
+      const k = e.target.closest("button")?.dataset.k;
+      if (k === "cancel") return close(null);
+      if (k === "del") code = code.slice(0, -1);
+      else if (k && code.length < 4) code += k;
+      draw();
+      if (code.length === 4) setTimeout(() => close(code), 150);
+    };
+  });
 }
+$("pad-keys").innerHTML = [["1", ""], ["2", "ABC"], ["3", "DEF"], ["4", "GHI"], ["5", "JKL"], ["6", "MNO"],
+  ["7", "PQRS"], ["8", "TUV"], ["9", "WXYZ"]].map(([d, l]) => `<button type="button" data-k="${d}">${d}<small>${l}</small></button>`).join("")
+  + `<button type="button" class="plain" data-k="cancel">Cancel</button><button type="button" data-k="0">0</button>`
+  + `<button type="button" class="plain" data-k="del" aria-label="Delete">Delete</button>`;
 
-$("alarm-ctl").addEventListener("click", async (e) => {
-  const b = e.target.closest("button[data-action]");
-  if (!b) return;
-  const action = b.dataset.action, code = $("alarm-code").value;
-  if (!/^\d{4}$/.test(code)) return alarmMsg("Enter your 4-digit code first.", "bad");
-  if (CONFIRM[action] && !confirm(CONFIRM[action])) return;
-  const buttons = $("alarm-ctl").querySelectorAll("button");
-  buttons.forEach((x) => x.disabled = true);
+// Send an action, then wait for the panel to show its effect.
+async function act(what, action, why, done) {
+  if (alarm.pending) return;
+  const code = await askCode(why);
+  if (!code) return drawControls();
+  alarm.pending = {what, done, until: Date.now() + 15000};
+  footer("Sending…");
+  drawControls();
   try {
     const r = await fetch(ALARM + "/action", {method: "POST", headers: {"Content-Type": "application/json"},
                                               body: JSON.stringify({action, code})});
     const reply = await r.json().catch(() => ({}));
-    alarmMsg(r.ok ? "Sent. The status above updates in a few seconds." : (reply.error || "Failed: " + r.status),
-             r.ok ? "ok" : "bad");
-    if (r.ok) setTimeout(tick, 3000);
+    if (!r.ok) throw new Error(reply.error || "failed (" + r.status + ")");
+    footer("Waiting for the panel…");
+    while (Date.now() < alarm.pending.until) {
+      await new Promise((ok) => setTimeout(ok, 1000));
+      alarm.status = await fetchAlarm().catch(() => alarm.status);
+      if (alarm.status && done(alarm.status)) { alarm.pending = null; footer(""); drawControls(); tick(); return; }
+    }
+    throw new Error("The panel didn't change. Was the code right?");
   } catch (err) {
-    alarmMsg("Couldn't reach the box: " + err.message, "bad");
-  } finally {
-    $("alarm-code").value = "";
-    buttons.forEach((x) => x.disabled = false);
+    alarm.pending = null;
+    footer(err.message.replace(/^./, (c) => c.toUpperCase()), true);
+    drawControls();
   }
+}
+
+$("chime").addEventListener("change", () => {
+  const on = $("chime").checked;
+  $("chime").checked = !on;  // stays put until the panel confirms
+  footer("");
+  act("chime", "chime", on ? "to turn chime on" : "to turn chime off", (st) => st.chime === on);
 });
-$("alarm-ctl").addEventListener("submit", (e) => e.preventDefault());
+document.querySelector(".seg").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled || b.getAttribute("aria-pressed") === "true") return;
+  footer("");
+  if (b.dataset.mode === "stay") act("mode", "stay", "to arm Stay", (st) => st.state === "stay");
+  else act("mode", "disarm", "to disarm", (st) => st.state === "disarmed");
+});
 alarmControls();
 
 // --- Tabs. The Live tab is #live, so it can be bookmarked.
