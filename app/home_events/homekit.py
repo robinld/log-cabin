@@ -304,13 +304,21 @@ class AlarmBridge(Bridge):
                                           substr(body, 5, 1), max(id)
                                    from log where source = 'evl' and event_type = 'cid'
                                    group by 1, 2""").fetchall()
+            # The panel doesn't always report a sensor restored (leaving programming
+            # clears troubles silently), so a sensor heard from since counts as back.
+            first = min((i for code, _, q, i in reports if code == SUPERVISION_LOST and q == "1"),
+                        default=None)
+            heard = dict(c.execute("""select cast(device_id as integer), max(id) from log
+                                      where id > ? and source = 'evl' and event_type = 'keypad'
+                                      and event_name = 'FAULT' group by 1""",
+                                   (first,)).fetchall()) if first else {}
         is_open = open_zones(row[0]) if row else set()
         low = {int(z) for k, z in screens if k == "LOBAT" and z}
         trouble = {int(z) for k, z in screens if k == "CHECK" and z}
         lost = set(trouble)
         fire = set()
-        for code, zone, q, _ in reports:
-            if q != "1":
+        for code, zone, q, rid in reports:
+            if q != "1" or (code == SUPERVISION_LOST and heard.get(zone, 0) > rid):
                 continue
             if code == LOW_BATTERY:
                 low.add(zone)
