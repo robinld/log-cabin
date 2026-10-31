@@ -19,6 +19,7 @@ Aggregate logs across various IoT systems and query them.
 | `app/home_events/homekit.py` | HomeKit bridge: the panel as a Security System (Off, Home, Away), the chime as a switch, and each zone as a contact, motion or smoke sensor with low battery and trouble |
 | `app/home_events/mdns_relay.py` | Carries the bridge's Bonjour packets between the box and the home LAN, which HomeKit needs to find it |
 | `app/install.sh` | Idempotent installer the box runs on first boot and on every deploy |
+| `tests/` | pytest tests for the alarm action server, the HomeKit bridge and the relay |
 | `scripts/` | `set-secrets.sh`, `deploy.sh`, `dashboard.sh` |
 
 ## Setup
@@ -56,6 +57,8 @@ Run `scripts/dashboard.sh` and open http://localhost:8001 for Datasette. With th
 Without `evl/user_code` the bridge is read-only: it shows state and sends notifications, and its controls spring back. With it, Off, Home, Away and Chime in the Home app send that code to the panel, through the EVL flume's local action server, logged as "from HomeKit". HomeKit never asks for a code, so anyone who can control your Home (household members, your Apple TV or HomePod, anyone in your iCloud account) can then disarm the alarm. If the relay, tunnel or box is down, the Home app shows No Response and sends no notifications; the panel itself is unaffected.
 
 **Tailscale** (optional): the box runs `tailscaled`, so chosen devices on your tailnet (a phone, or an assistant such as Muse through its Tailscale connector) can reach Datasette without a public endpoint. Sign a new box in once, as root over SSM: `tailscale up --hostname=log-cabin --accept-dns=false`, then open the link it prints, then `tailscale serve --bg 8001` to publish Datasette at `https://log-cabin.<tailnet>.ts.net` with a real certificate (enable Serve for the tailnet when it asks). A replacement box needs both steps again. New tailnets allow every device to reach every port, so add an access rule, like the one in `infra/tailscale-policy.hujson`, that lets assistants reach only `log-cabin:443`; port 5514 accepts UniFi log lines from anyone who can reach it.
+
+Tests: `pip install -r requirements-dev.txt`, then `python -m pytest tests` (Python 3.11, as on the box).
 
 To ship changes: push, publish a release (`gh release create vX.Y.Z --generate-notes`),
 then run `scripts/deploy.sh`. Pushing to `main` alone deploys nothing.

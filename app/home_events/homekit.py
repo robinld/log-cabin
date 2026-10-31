@@ -182,7 +182,10 @@ class Chime(Accessory):
 
     def set_on(self, value):
         self.pending.start(bool(value))
-        if bool(value) != self.panel:
+        if self.panel is None:  # the key toggles, so it's only safe once the state is known
+            log.info("refused HomeKit chime: the panel's state isn't known yet")
+            self.pending.fail()
+        elif bool(value) != self.panel:
             self.send("chime", self.pending)  # the panel's chime key toggles it
 
     def update(self, chime):
@@ -316,8 +319,8 @@ class AlarmBridge(Bridge):
         is_open = open_zones(row[0]) if row else set()
         # The EVL reports a zone closed about a minute after the keypad stops
         # showing it; the panel's Ready light comes back at once. Disarmed and
-        # ready means nothing is open.
-        if st.get("state") == "disarmed" and st.get("ready"):
+        # ready means nothing is open, unless a zone is bypassed.
+        if st.get("state") == "disarmed" and st.get("ready") and not st.get("bypass"):
             is_open = set()
         low = {int(z) for k, z in screens if k == "LOBAT" and z}
         trouble = {int(z) for k, z in screens if k == "CHECK" and z}

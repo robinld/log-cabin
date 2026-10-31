@@ -35,15 +35,17 @@ MIN_BACKOFF_S, MAX_BACKOFF_S = 5, 300
 # given message at most this often. A message not seen in the last 30 s is
 # always stored. Kept under the 45 s gap used by alarm_zone_intervals.
 REPEAT_EVERY_S = 30
-CHANGES = ("%01,", "%02,")  # zone state, partition state
+# Sent only on change, so a repeat is a real change back (open, closed, open
+# again) and is always stored: zone state, partition state, Contact ID report.
+CHANGES = ("%01,", "%02,", "%03,")
 
 ACTION_PORT = 8002
 # Honeywell keypad commands: user code + this key.
 ACTIONS = {"chime": "9", "stay": "3", "away": "2", "disarm": "1"}
 ACTION_LABELS = {"chime": "Chime toggled", "stay": "Arm stay", "away": "Arm away", "disarm": "Disarm"}
-ACTION_GAP_S = 3  # at most one action this often, so keypresses never interleave
+ACTION_GAP_S = 3  # between the end of one action and the next
 KEY_ACK_TIMEOUT_S = 3
-CODE = re.compile(r"\d{4}")
+CODE = re.compile(r"[0-9]{4}")  # not \d, which matches other scripts' digits too
 
 KINDS = {"%00": "keypad", "%01": "zone_state", "%02": "partition_state",
          "%03": "cid", "%FF": "zone_timers"}
@@ -81,7 +83,8 @@ class Flume:
         self.last_stored = {}  # line -> time stored
         self.writer = None  # the live session, for actions
         self.leds = None  # latest keypad LED bits
-        self.last_action = 0
+        self.last_action = 0  # when the last action finished
+        self.action_lock = asyncio.Lock()  # one action's keys at a time
         self.key_ack = None  # future for the pending ^03's reply
 
     def store(self, line):
@@ -98,8 +101,6 @@ class Flume:
             except (IndexError, ValueError):
                 pass
         now = time.time()
-        # Zone and partition states are sent only on change, so a repeat is a
-        # real change back (open, closed, open again) and is always stored.
         if not line.startswith(CHANGES) and now - self.last_stored.get(line, 0) < REPEAT_EVERY_S:
             return
         event_type, event_name, zone = evl_fields(line)
@@ -143,7 +144,7 @@ class Flume:
             finally:
                 dumper.cancel()
         finally:
-            self.writer = None
+            self.writer = self.leds = None  # nothing below is current any more
             writer.close()
 
     def status(self):
@@ -152,35 +153,46 @@ class Flume:
             return {"connected": self.writer is not None}
         state = ("alarm" if L & 0x0001 else "away" if L & 0x0004 else "stay" if L & 0x8000
                  else "disarmed")
-        return {"connected": self.writer is not None, "state": state,
-                "ready": bool(L & 0x1000), "chime": bool(L & 0x0020)}
+        return {"connected": True, "state": state, "ready": bool(L & 0x1000),
+                "bypass": bool(L & 0x0010), "chime": bool(L & 0x0020)}
 
     async def act(self, action, code):
         """Send one of ACTIONS. Returns an error message, or None once sent."""
-        if action not in ACTIONS:
+        if not isinstance(action, str) or action not in ACTIONS:
             return "unknown action"
-        if not CODE.fullmatch(code or ""):
+        if not isinstance(code, str) or not CODE.fullmatch(code):
             return "the code is 4 digits"
         if self.writer is None:
             return "not connected to the alarm panel"
-        now = time.time()
-        if now - self.last_action < ACTION_GAP_S:
+        if self.action_lock.locked() or time.time() - self.last_action < ACTION_GAP_S:
             return "one action at a time"
-        self.last_action = now
-        for i, key in enumerate(code + ACTIONS[action]):
+        async with self.action_lock:
+            try:
+                err = await self.send_keys(action, code + ACTIONS[action])
+            finally:
+                self.last_action = time.time()
+        if err:
+            return err
+        log.info("sent %s", action)  # never the code
+        db.append(self.conn, source="evl", event_type="action", event_name=action,
+                  body=f"{ACTION_LABELS[action]} from HomeKit")
+        return None
+
+    async def send_keys(self, action, keys):
+        writer = self.writer
+        for i, key in enumerate(keys):
+            if self.writer is not writer:
+                return "lost the connection to the alarm panel"
             self.key_ack = asyncio.get_running_loop().create_future()
-            self.writer.write(f"^03,1,{key}$\r\n".encode())
-            await self.writer.drain()
+            writer.write(f"^03,1,{key}$\r\n".encode())
+            await writer.drain()
             try:
                 ack = await asyncio.wait_for(self.key_ack, KEY_ACK_TIMEOUT_S)
             except asyncio.TimeoutError:
                 ack = "no reply"
             if ack != "00":
-                log.warning("%s: key %d of %d not accepted (%s)", action, i + 1, len(code) + 1, ack)
+                log.warning("%s: key %d of %d not accepted (%s)", action, i + 1, len(keys), ack)
                 return f"the alarm panel didn't accept the keys ({ack})"
-        log.info("sent %s", action)  # never the code
-        db.append(self.conn, source="evl", event_type="action", event_name=action,
-                  body=f"{ACTION_LABELS[action]} from HomeKit")
         return None
 
     async def run_forever(self):
@@ -210,7 +222,7 @@ class ActionServer:
     async def handle(self, reader, writer):
         try:
             status, reply = await asyncio.wait_for(self.respond(reader), 10)
-        except (OSError, TimeoutError, ValueError):
+        except (OSError, TimeoutError, ValueError, EOFError):  # EOFError: IncompleteReadError
             status, reply = 400, {"error": "bad request"}
         body = json.dumps(reply).encode()
         reason = {200: "OK", 400: "Bad Request", 404: "Not Found", 409: "Conflict"}[status]
@@ -237,7 +249,9 @@ class ActionServer:
             return 200, self.flume.status()
         if method == "POST" and path == "/action":
             req = json.loads(data or b"{}")
-            err = await self.flume.act(req.get("action"), str(req.get("code") or ""))
+            if not isinstance(req, dict):
+                return 400, {"error": "bad request"}
+            err = await self.flume.act(req.get("action"), req.get("code"))
             return (409, {"error": err}) if err else (200, {"ok": True})
         return 404, {"error": "not found"}
 

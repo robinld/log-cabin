@@ -49,42 +49,78 @@ def multicast_socket(local_ip, only_this_interface):
     return u
 
 
-def connect_out(box_ip):
-    while True:
-        try:
-            t = socket.create_connection((box_ip, PORT), timeout=5)
-            t.settimeout(None)
-            return t
-        except OSError as e:
-            log.warning("connect to %s failed: %s", box_ip, e)
-            time.sleep(5)
+def keepalive(t):
+    """Notice a peer that vanished without closing (power loss) within about a minute."""
+    t.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    for name, value in (("TCP_KEEPIDLE", 30), ("TCP_KEEPALIVE", 30),  # Linux, macOS
+                        ("TCP_KEEPINTVL", 10), ("TCP_KEEPCNT", 3)):
+        if hasattr(socket, name):
+            t.setsockopt(socket.IPPROTO_TCP, getattr(socket, name), value)
+    t.settimeout(None)
+    return t
 
 
-def accept_in(listen_ip, peer):
-    srv = socket.socket()
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind((listen_ip, PORT))
-    srv.listen(1)
-    try:
+class Outgoing:
+    """LAN side: connect to the box, retrying until it answers."""
+
+    def __init__(self, box_ip):
+        self.box_ip = box_ip
+        self.sockets = []
+
+    def connect(self):
         while True:
-            t, addr = srv.accept()
-            if addr[0] == peer:
-                return t
-            log.warning("refused %s", addr[0])
-            t.close()
-    finally:
-        srv.close()
+            try:
+                return keepalive(socket.create_connection((self.box_ip, PORT), timeout=5))
+            except OSError as e:
+                log.warning("connect to %s failed: %s", self.box_ip, e)
+                time.sleep(5)
+
+    def replacement(self, ready):
+        return None
 
 
-def relay(u, connect, forward_all, peer):
-    """Copy packets both ways until the TCP connection drops, then reconnect."""
+class Incoming:
+    """Box side: keep listening, so a new connection from the peer replaces a dead one."""
+
+    def __init__(self, listen_ip, peer):
+        self.peer = peer
+        self.srv = socket.socket()
+        self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.srv.bind((listen_ip, PORT))
+        self.srv.listen(1)
+        self.sockets = [self.srv]
+
+    def accept(self):
+        t, addr = self.srv.accept()
+        if addr[0] == self.peer:
+            return keepalive(t)
+        log.warning("refused %s", addr[0])
+        t.close()
+        return None
+
+    def connect(self):
+        while not (t := self.accept()):
+            pass
+        return t
+
+    def replacement(self, ready):
+        return self.accept() if self.srv in ready else None
+
+
+def relay(u, link, forward_all, peer):
+    """Copy packets both ways; reconnect when the TCP connection drops or is replaced."""
     injected = {}  # payload hash -> time, so our own re-multicasts aren't sent back
     while True:
-        t, buf = connect(), b""
+        t, buf = link.connect(), b""
         log.info("connected")
         try:
             while True:
-                r, _, _ = select.select([u, t], [], [], 30)
+                r, _, _ = select.select([u, t, *link.sockets], [], [], 30)
+                if (new := link.replacement(r)):
+                    log.info("peer reconnected; dropping the old connection")
+                    t.close()
+                    t, buf = new, b""
+                    continue
                 now = time.time()
                 injected = {h: ts for h, ts in injected.items() if now - ts < ECHO_S}
                 if u in r:
@@ -117,11 +153,11 @@ def main():
         config.setup_logging()
         peer = config.param("homekit/relay_peer")
         listen_ip = wg_address()
-        relay(multicast_socket(MDNS_IP, True), lambda: accept_in(listen_ip, peer), True, peer)
+        relay(multicast_socket(MDNS_IP, True), Incoming(listen_ip, peer), True, peer)
     elif side == "lan" and len(sys.argv) == 4:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
         lan_ip, box_ip = sys.argv[2], sys.argv[3]
-        relay(multicast_socket(lan_ip, False), lambda: connect_out(box_ip), False, box_ip)
+        relay(multicast_socket(lan_ip, False), Outgoing(box_ip), False, box_ip)
     else:
         sys.exit("usage: mdns_relay box | mdns_relay lan <LAN address> <box's WireGuard address>")
 
