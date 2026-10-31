@@ -10,7 +10,9 @@ panel's Contact ID reports (plus the keypad's CHECK and LOBAT screens).
 HomeKit never asks for an alarm code, so changes made in the Home app are sent
 with the user code stored in SSM (evl/user_code). Without it the bridge is
 read-only and the Home app's controls spring back. A change that the panel
-hasn't shown within PENDING_S springs back too.
+hasn't shown within PENDING_S springs back too. HomeKit has no "not ready to
+arm" state, so while the panel is disarmed and not ready the Alarm shows Off
+with its fault flag raised, and arming springs back without being sent.
 
 HomeKit finds accessories by Bonjour on the home LAN. The bridge advertises on
 a dummy interface (mdns0, set up by install.sh), and home_events.mdns_relay
@@ -121,8 +123,10 @@ class Alarm(Accessory):
         super().__init__(driver, name)
         self.send = send
         self.pending = Pending()
-        s = self.add_preload_service("SecuritySystem")
+        self.ready = True
+        s = self.add_preload_service("SecuritySystem", chars=["StatusFault"])
         self.current = s.configure_char("SecuritySystemCurrentState", value=DISARMED)
+        self.not_ready = s.configure_char("StatusFault", value=0)
         self.target = s.configure_char(
             "SecuritySystemTargetState", value=DISARMED,
             valid_values={"StayArm": STAY, "AwayArm": AWAY, "Disarm": DISARMED},
@@ -130,14 +134,22 @@ class Alarm(Accessory):
 
     def set_target(self, value):
         self.pending.start(value)
+        if value != DISARMED and self.current.value == DISARMED and not self.ready:
+            log.info("refused HomeKit %s: the panel isn't ready to arm", TARGET_ACTIONS[value])
+            self.pending.fail()
+            return
         self.send(TARGET_ACTIONS[value], self.pending)
 
-    def update(self, state):
+    def update(self, state, ready):
         cur = CURRENT.get(state)
         if cur is None:
             return
+        self.ready = ready
         if self.current.value != cur:
             self.current.set_value(cur)
+        not_ready = int(cur == DISARMED and not ready)
+        if self.not_ready.value != not_ready:
+            self.not_ready.set_value(not_ready)
         # While triggered, the target stays at the armed mode, so Off disarms.
         if self.pending.waiting(cur) or cur == TRIGGERED:
             return
@@ -262,7 +274,7 @@ class AlarmBridge(Bridge):
             with urllib.request.urlopen(ACTIONS_URL + "/status", timeout=2) as r:
                 st = json.load(r)
             if "state" in st:
-                self.alarm.update(st["state"])
+                self.alarm.update(st["state"], bool(st["ready"]))
                 self.chime.update(bool(st["chime"]))
         except OSError as e:
             log.warning("status unavailable: %s", e)
