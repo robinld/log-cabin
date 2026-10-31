@@ -1,16 +1,24 @@
-"""EnvisaLink (Honeywell) TPI -> SQLite. Read-only.
+"""EnvisaLink (Honeywell) TPI -> SQLite, plus three keypad actions.
 
 Holds the one TPI session the EVL allows, on port 4025 over the WireGuard
 tunnel, and appends every line it sends to the log table, as sent. Zones,
 open intervals and troubles are derived at query time by the views in db.py.
 
-The only command ever sent is ^02 (dump zone timers), every 30 s, which also
-keeps the session alive. Never ^03: that is a keypress, and keypresses can
-arm, disarm or program the panel.
+It sends ^02 (dump zone timers) every 30 s, which also keeps the session
+alive. The only other command is ^03 (keypresses), and only as one of ACTIONS:
+a user code followed by one key. Raw keys are never accepted, so nothing here
+can reach installer programming.
+
+Actions come from a small HTTP server on 127.0.0.1:ACTION_PORT, reachable only
+through Tailscale Serve (https://<box>/alarm). Serve adds the caller's
+Tailscale login; only the login that owns this box may act. The code arrives
+with each request and is never stored or logged.
 """
 
 import asyncio
+import json
 import logging
+import re
 import time
 
 from .. import config, db
@@ -27,6 +35,13 @@ MIN_BACKOFF_S, MAX_BACKOFF_S = 5, 300
 # given message at most this often. A message not seen in the last 30 s is
 # always stored. Kept under the 45 s gap used by alarm_zone_intervals.
 REPEAT_EVERY_S = 30
+
+ACTION_PORT = 8002
+# Honeywell keypad commands: user code + this key.
+ACTIONS = {"chime": "9", "stay": "3", "disarm": "1"}
+ACTION_LABELS = {"chime": "Chime toggled", "stay": "Arm stay", "disarm": "Disarm"}
+ACTION_GAP_S = 3  # at most one action this often
+CODE = re.compile(r"\d{4}")
 
 KINDS = {"%00": "keypad", "%01": "zone_state", "%02": "partition_state",
          "%03": "cid", "%FF": "zone_timers"}
@@ -62,6 +77,9 @@ class Flume:
     def __init__(self, conn, host, password):
         self.conn, self.host, self.password = conn, host, password
         self.last_stored = {}  # line -> time stored
+        self.writer = None  # the live session, for actions
+        self.leds = None  # latest keypad LED bits
+        self.last_action = 0
 
     def store(self, line):
         if line.startswith("^"):
@@ -69,6 +87,11 @@ class Flume:
             if line[4:6] != "00":
                 log.warning("EVL rejected a command: %s", line)
             return
+        if line.startswith("%00,"):
+            try:
+                self.leds = int(line.split(",")[2], 16)
+            except (IndexError, ValueError):
+                pass
         now = time.time()
         if now - self.last_stored.get(line, 0) < REPEAT_EVERY_S:
             return
@@ -103,6 +126,7 @@ class Flume:
             if reply != "OK":
                 raise LoginFailed(reply)
             log.info("logged in to %s", self.host)
+            self.writer = writer
             dumper = asyncio.create_task(self.dump_forever(writer))
             try:
                 while True:
@@ -112,7 +136,35 @@ class Flume:
             finally:
                 dumper.cancel()
         finally:
+            self.writer = None
             writer.close()
+
+    def status(self):
+        L = self.leds
+        if L is None:
+            return {"connected": self.writer is not None}
+        state = ("alarm" if L & 0x0001 else "away" if L & 0x0004 else "stay" if L & 0x8000
+                 else "disarmed")
+        return {"connected": self.writer is not None, "state": state,
+                "ready": bool(L & 0x1000), "chime": bool(L & 0x0020)}
+
+    async def act(self, action, code, login):
+        """Send one of ACTIONS. Returns an error message, or None once sent."""
+        if action not in ACTIONS:
+            return "unknown action"
+        if not CODE.fullmatch(code or ""):
+            return "the code is 4 digits"
+        if self.writer is None:
+            return "not connected to the alarm panel"
+        if time.time() - self.last_action < ACTION_GAP_S:
+            return "one action at a time"
+        self.last_action = time.time()
+        self.writer.write(f"^03,1,{code}{ACTIONS[action]}$\r\n".encode())
+        await self.writer.drain()
+        log.info("sent %s for %s", action, login)  # never the code
+        db.append(self.conn, source="evl", event_type="action", event_name=action,
+                  body=f"{ACTION_LABELS[action]} by {login}")
+        return None
 
     async def run_forever(self):
         backoff = MIN_BACKOFF_S
@@ -132,12 +184,79 @@ class Flume:
             backoff = min(backoff * 2, MAX_BACKOFF_S)
 
 
+async def box_owner():
+    """The Tailscale login that owns this box, or None if Tailscale isn't up."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "tailscale", "status", "--json", stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), 10)
+        st = json.loads(out)
+        return st["User"][str(st["Self"]["UserID"])]["LoginName"]
+    except (OSError, TimeoutError, ValueError, KeyError) as e:
+        log.warning("can't read the box's Tailscale owner: %s", e or type(e).__name__)
+        return None
+
+
+class ActionServer:
+    """Minimal HTTP for GET status and POST action, on localhost only.
+
+    Tailscale Serve forwards /alarm here and sets Tailscale-User-Login; it may
+    or may not strip the /alarm prefix, so either form is accepted.
+    """
+
+    def __init__(self, flume):
+        self.flume, self.owner = flume, None
+
+    async def handle(self, reader, writer):
+        try:
+            status, reply = await asyncio.wait_for(self.respond(reader), 10)
+        except (OSError, TimeoutError, ValueError):
+            status, reply = 400, {"error": "bad request"}
+        body = json.dumps(reply).encode()
+        reason = {200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found",
+                  409: "Conflict"}[status]
+        writer.write(f"HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\n"
+                     f"Content-Length: {len(body)}\r\nCache-Control: no-store\r\n"
+                     f"Connection: close\r\n\r\n".encode() + body)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def respond(self, reader):
+        method, path, _ = (await reader.readline()).decode("latin-1").split(" ", 2)
+        headers = {}
+        while (line := (await reader.readline()).decode("latin-1").strip()):
+            k, _, v = line.partition(":")
+            headers[k.strip().lower()] = v.strip()
+        length = int(headers.get("content-length") or 0)
+        if length > 1024:
+            return 400, {"error": "too large"}
+        data = await reader.readexactly(length) if length else b""
+
+        self.owner = self.owner or await box_owner()
+        login = headers.get("tailscale-user-login")
+        if not self.owner or login != self.owner:
+            return 403, {"error": "only the box's Tailscale owner can use this"}
+        path = path.split("?")[0].removeprefix("/alarm")
+        if method == "GET" and path in ("", "/", "/status"):
+            return 200, self.flume.status()
+        if method == "POST" and path == "/action":
+            req = json.loads(data or b"{}")
+            err = await self.flume.act(req.get("action"), str(req.get("code") or ""), login)
+            return (409, {"error": err}) if err else (200, {"ok": True})
+        return 404, {"error": "not found"}
+
+
 async def main():
     config.setup_logging()
     conn = db.connect()
     db.init(conn)
     flume = Flume(conn, config.param("evl/host"), config.param("evl/password"))
-    await flume.run_forever()
+    server = await asyncio.start_server(ActionServer(flume).handle, "127.0.0.1", ACTION_PORT)
+    async with server:
+        await flume.run_forever()
 
 
 if __name__ == "__main__":

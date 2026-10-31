@@ -1,5 +1,5 @@
 [Unit]
-Description=EnvisaLink alarm panel flume (read-only)
+Description=EnvisaLink alarm panel flume (plus chime, stay and disarm for the box's Tailscale owner)
 After=network-online.target
 Wants=network-online.target
 RequiresMountsFor=/data

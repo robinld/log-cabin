@@ -69,6 +69,14 @@
   @keyframes flash { from { background: var(--info-bg); } to { background: transparent; } }
   .s-evl { color: var(--bad) !important; } .s-yolink { color: var(--ok) !important; }
   .s-unifi { color: var(--info) !important; } .s-lutron { color: var(--warn) !important; }
+  .ctl { display: flex; gap: 8px; padding: 0 14px 14px; flex-wrap: wrap; }
+  .ctl input { width: 92px; flex: none; font: inherit; font-size: 18px; letter-spacing: 4px; text-align: center;
+               padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); }
+  .ctl button { flex: 1; min-width: 70px; border: 0; border-radius: 10px; padding: 10px 0; font: inherit;
+                font-size: 15px; font-weight: 600; background: var(--info-bg); color: var(--info); cursor: pointer; }
+  .ctl button.danger { background: var(--bad-bg); color: var(--bad); }
+  .ctl button:disabled { opacity: .5; }
+  .ctl-msg { padding: 0 14px 12px; font-size: 13px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -81,7 +89,15 @@
 
   <section id="status">
   <div class="card"><div class="hero" id="alarm-hero"><span class="dot"></span><div><div class="title">Alarm</div><div class="sub">Loading…</div></div></div>
-    <div class="chips" id="alarm-chips"></div></div>
+    <div class="chips" id="alarm-chips"></div>
+    <form class="ctl" id="alarm-ctl" hidden autocomplete="off">
+      <input id="alarm-code" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4"
+             placeholder="Code" autocomplete="off" aria-label="Alarm code">
+      <button type="button" data-action="chime">Chime</button>
+      <button type="button" data-action="stay">Stay</button>
+      <button type="button" data-action="disarm" class="danger">Disarm</button>
+    </form>
+    <div class="ctl-msg" id="alarm-msg" hidden></div></div>
 
   <h2>Doors</h2><div class="card" id="doors"></div>
   <h2>Temperature</h2><div class="card" id="temps"></div>
@@ -241,7 +257,7 @@ async function render() {
 // same reading, and Lutron re-sends every level when it reconnects.
 const LIVE_SQL = `select id, received_at, source, event_type, event_name, device_id, body from log
   where id > :since and (
-    (source = 'evl' and event_type in ('keypad', 'zone_state'))
+    (source = 'evl' and event_type in ('keypad', 'zone_state', 'action'))
     or (source = 'yolink' and event_name in ('Report', 'Alert', 'StatusChange'))
     or source = 'unifi'
     or (source = 'lutron' and event_type = 'OneZoneStatus')
@@ -275,6 +291,7 @@ function summarize(r) {
   if (r.source === "evl" && r.event_type === "keypad") {
     return {key: "evl:status", text: alarmStatus(keypad(r.body).leds).title};
   }
+  if (r.source === "evl" && r.event_type === "action") return {key: null, text: r.body};
   if (r.source === "evl" && r.event_type === "zone_state") {
     const now = openZones(r.body), prev = live.zones, zone = (z) => titleCase(name("evl", z) || "Zone " + z);
     // A motion detector's zone "opens" while it sees motion.
@@ -373,6 +390,50 @@ $("stream").addEventListener("click", (e) => {
   live.open.has(id) ? live.open.delete(id) : live.open.add(id);
   row.classList.toggle("open", live.open.has(id));
 });
+
+// --- Alarm actions. /alarm only exists through Tailscale Serve, and answers
+// only the box's Tailscale owner, so elsewhere the controls stay hidden. The
+// code is sent with each action and never kept, here or on the box.
+const ALARM = "/alarm";
+const CONFIRM = {stay: "Arm the alarm in Stay mode?", disarm: "Disarm the alarm?"};
+
+async function alarmControls() {
+  try {
+    const r = await fetch(ALARM + "/status", {cache: "no-store"});
+    $("alarm-ctl").hidden = !r.ok;
+  } catch { $("alarm-ctl").hidden = true; }
+}
+
+function alarmMsg(text, cls = "") {
+  $("alarm-msg").textContent = text;
+  $("alarm-msg").className = "ctl-msg " + cls;
+  $("alarm-msg").hidden = !text;
+}
+
+$("alarm-ctl").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-action]");
+  if (!b) return;
+  const action = b.dataset.action, code = $("alarm-code").value;
+  if (!/^\d{4}$/.test(code)) return alarmMsg("Enter your 4-digit code first.", "bad");
+  if (CONFIRM[action] && !confirm(CONFIRM[action])) return;
+  const buttons = $("alarm-ctl").querySelectorAll("button");
+  buttons.forEach((x) => x.disabled = true);
+  try {
+    const r = await fetch(ALARM + "/action", {method: "POST", headers: {"Content-Type": "application/json"},
+                                              body: JSON.stringify({action, code})});
+    const reply = await r.json().catch(() => ({}));
+    alarmMsg(r.ok ? "Sent. The status above updates in a few seconds." : (reply.error || "Failed: " + r.status),
+             r.ok ? "ok" : "bad");
+    if (r.ok) setTimeout(tick, 3000);
+  } catch (err) {
+    alarmMsg("Couldn't reach the box: " + err.message, "bad");
+  } finally {
+    $("alarm-code").value = "";
+    buttons.forEach((x) => x.disabled = false);
+  }
+});
+$("alarm-ctl").addEventListener("submit", (e) => e.preventDefault());
+alarmControls();
 
 // --- Tabs. The Live tab is #live, so it can be bookmarked.
 let timer = null;
