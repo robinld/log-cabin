@@ -9,10 +9,11 @@ alive. The only other command is ^03 (keypresses), and only as one of ACTIONS:
 a user code followed by one key. Raw keys are never accepted, so nothing here
 can reach installer programming.
 
-Actions come from a small HTTP server on 127.0.0.1:ACTION_PORT, reachable only
-through Tailscale Serve (https://<box>/alarm). Serve adds the caller's
-Tailscale login; only the login that owns this box may act. The code arrives
-with each request and is never stored or logged.
+Actions come from a small HTTP server on 127.0.0.1:ACTION_PORT; publishing it
+is the box's business (see install.sh). The user code arrives with each
+request, the same as at a wall keypad, and is never stored or logged. A wrong
+code does nothing at the panel, so actions are rate-limited to make guessing
+impractical.
 """
 
 import asyncio
@@ -40,7 +41,8 @@ ACTION_PORT = 8002
 # Honeywell keypad commands: user code + this key.
 ACTIONS = {"chime": "9", "stay": "3", "disarm": "1"}
 ACTION_LABELS = {"chime": "Chime toggled", "stay": "Arm stay", "disarm": "Disarm"}
-ACTION_GAP_S = 3  # at most one action this often
+ACTION_GAP_S = 3  # at most one action this often,
+ACTION_LIMIT, ACTION_WINDOW_S = 5, 600  # and this many per window
 CODE = re.compile(r"\d{4}")
 
 KINDS = {"%00": "keypad", "%01": "zone_state", "%02": "partition_state",
@@ -79,7 +81,7 @@ class Flume:
         self.last_stored = {}  # line -> time stored
         self.writer = None  # the live session, for actions
         self.leds = None  # latest keypad LED bits
-        self.last_action = 0
+        self.action_times = []
 
     def store(self, line):
         if line.startswith("^"):
@@ -148,7 +150,7 @@ class Flume:
         return {"connected": self.writer is not None, "state": state,
                 "ready": bool(L & 0x1000), "chime": bool(L & 0x0020)}
 
-    async def act(self, action, code, login):
+    async def act(self, action, code):
         """Send one of ACTIONS. Returns an error message, or None once sent."""
         if action not in ACTIONS:
             return "unknown action"
@@ -156,14 +158,18 @@ class Flume:
             return "the code is 4 digits"
         if self.writer is None:
             return "not connected to the alarm panel"
-        if time.time() - self.last_action < ACTION_GAP_S:
+        now = time.time()
+        self.action_times = [t for t in self.action_times if now - t < ACTION_WINDOW_S]
+        if self.action_times and now - self.action_times[-1] < ACTION_GAP_S:
             return "one action at a time"
-        self.last_action = time.time()
+        if len(self.action_times) >= ACTION_LIMIT:
+            return f"limit is {ACTION_LIMIT} actions per {ACTION_WINDOW_S // 60} minutes; try again later"
+        self.action_times.append(now)
         self.writer.write(f"^03,1,{code}{ACTIONS[action]}$\r\n".encode())
         await self.writer.drain()
-        log.info("sent %s for %s", action, login)  # never the code
+        log.info("sent %s", action)  # never the code
         db.append(self.conn, source="evl", event_type="action", event_name=action,
-                  body=f"{ACTION_LABELS[action]} by {login}")
+                  body=f"{ACTION_LABELS[action]} from /home")
         return None
 
     async def run_forever(self):
@@ -184,29 +190,15 @@ class Flume:
             backoff = min(backoff * 2, MAX_BACKOFF_S)
 
 
-async def box_owner():
-    """The Tailscale login that owns this box, or None if Tailscale isn't up."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "tailscale", "status", "--json", stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL)
-        out, _ = await asyncio.wait_for(proc.communicate(), 10)
-        st = json.loads(out)
-        return st["User"][str(st["Self"]["UserID"])]["LoginName"]
-    except (OSError, TimeoutError, ValueError, KeyError) as e:
-        log.warning("can't read the box's Tailscale owner: %s", e or type(e).__name__)
-        return None
-
-
 class ActionServer:
     """Minimal HTTP for GET status and POST action, on localhost only.
 
-    Tailscale Serve forwards /alarm here and sets Tailscale-User-Login; it may
-    or may not strip the /alarm prefix, so either form is accepted.
+    Whatever publishes it may or may not strip an /alarm prefix, so either
+    form is accepted.
     """
 
     def __init__(self, flume):
-        self.flume, self.owner = flume, None
+        self.flume = flume
 
     async def handle(self, reader, writer):
         try:
@@ -214,8 +206,7 @@ class ActionServer:
         except (OSError, TimeoutError, ValueError):
             status, reply = 400, {"error": "bad request"}
         body = json.dumps(reply).encode()
-        reason = {200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found",
-                  409: "Conflict"}[status]
+        reason = {200: "OK", 400: "Bad Request", 404: "Not Found", 409: "Conflict"}[status]
         writer.write(f"HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\n"
                      f"Content-Length: {len(body)}\r\nCache-Control: no-store\r\n"
                      f"Connection: close\r\n\r\n".encode() + body)
@@ -234,17 +225,12 @@ class ActionServer:
         if length > 1024:
             return 400, {"error": "too large"}
         data = await reader.readexactly(length) if length else b""
-
-        self.owner = self.owner or await box_owner()
-        login = headers.get("tailscale-user-login")
-        if not self.owner or login != self.owner:
-            return 403, {"error": "only the box's Tailscale owner can use this"}
         path = path.split("?")[0].removeprefix("/alarm")
         if method == "GET" and path in ("", "/", "/status"):
             return 200, self.flume.status()
         if method == "POST" and path == "/action":
             req = json.loads(data or b"{}")
-            err = await self.flume.act(req.get("action"), str(req.get("code") or ""), login)
+            err = await self.flume.act(req.get("action"), str(req.get("code") or ""))
             return (409, {"error": err}) if err else (200, {"ok": True})
         return 404, {"error": "not found"}
 

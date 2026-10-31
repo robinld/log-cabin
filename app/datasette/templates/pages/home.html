@@ -391,9 +391,9 @@ $("stream").addEventListener("click", (e) => {
   row.classList.toggle("open", live.open.has(id));
 });
 
-// --- Alarm actions. /alarm only exists through Tailscale Serve, and answers
-// only the box's Tailscale owner, so elsewhere the controls stay hidden. The
-// code is sent with each action and never kept, here or on the box.
+// --- Alarm actions, at /alarm where the box publishes them (not over the LAN),
+// so elsewhere the controls stay hidden. The code is sent with each action and
+// never kept, here or on the box.
 const ALARM = "/alarm";
 const CONFIRM = {stay: "Arm the alarm in Stay mode?", disarm: "Disarm the alarm?"};
 
