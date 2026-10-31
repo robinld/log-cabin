@@ -250,7 +250,7 @@ class AlarmBridge(Bridge):
         self.driver.add_job(self.post, action, pending)
 
     def post(self, action, pending):
-        body = json.dumps({"action": action, "code": self.code, "via": "HomeKit"}).encode()
+        body = json.dumps({"action": action, "code": self.code}).encode()
         req = urllib.request.Request(ACTIONS_URL + "/action", body,
                                      {"Content-Type": "application/json"})
         try:

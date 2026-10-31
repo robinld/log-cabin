@@ -29,11 +29,10 @@ dnf install -y tailscale
 systemctl enable --now tailscaled.service
 # SSM is the only way in, so nothing needs SSH listening.
 systemctl disable --now sshd.service 2>/dev/null || true
-# Alarm actions (the EVL flume's localhost port) at https://<box>/alarm. Serve
-# is the only way to reach them, and it tells them who is asking. Skipped
-# until the box is signed in to Tailscale.
+# Alarm actions are for the HomeKit bridge on this box only: take down the
+# /alarm path that earlier versions published.
 if tailscale status >/dev/null 2>&1; then
-  tailscale serve --bg --set-path /alarm http://127.0.0.1:8002 >/dev/null
+  tailscale serve --set-path /alarm off >/dev/null 2>&1 || true
 fi
 
 # --- Python ---------------------------------------------------------------
