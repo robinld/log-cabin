@@ -282,6 +282,7 @@ class AlarmBridge(Bridge):
             if self.add_zones():
                 self.driver.config_changed()
 
+        st = {}
         try:
             with urllib.request.urlopen(ACTIONS_URL + "/status", timeout=2) as r:
                 st = json.load(r)
@@ -313,6 +314,11 @@ class AlarmBridge(Bridge):
                                       and event_name = 'FAULT' group by 1""",
                                    (first,)).fetchall()) if first else {}
         is_open = open_zones(row[0]) if row else set()
+        # The EVL reports a zone closed about a minute after the keypad stops
+        # showing it; the panel's Ready light comes back at once. Disarmed and
+        # ready means nothing is open.
+        if st.get("state") == "disarmed" and st.get("ready"):
+            is_open = set()
         low = {int(z) for k, z in screens if k == "LOBAT" and z}
         trouble = {int(z) for k, z in screens if k == "CHECK" and z}
         lost = set(trouble)

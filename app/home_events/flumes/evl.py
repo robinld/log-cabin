@@ -35,6 +35,7 @@ MIN_BACKOFF_S, MAX_BACKOFF_S = 5, 300
 # given message at most this often. A message not seen in the last 30 s is
 # always stored. Kept under the 45 s gap used by alarm_zone_intervals.
 REPEAT_EVERY_S = 30
+CHANGES = ("%01,", "%02,")  # zone state, partition state
 
 ACTION_PORT = 8002
 # Honeywell keypad commands: user code + this key.
@@ -97,7 +98,9 @@ class Flume:
             except (IndexError, ValueError):
                 pass
         now = time.time()
-        if now - self.last_stored.get(line, 0) < REPEAT_EVERY_S:
+        # Zone and partition states are sent only on change, so a repeat is a
+        # real change back (open, closed, open again) and is always stored.
+        if not line.startswith(CHANGES) and now - self.last_stored.get(line, 0) < REPEAT_EVERY_S:
             return
         event_type, event_name, zone = evl_fields(line)
         db.append(self.conn, source="evl", event_type=event_type, event_name=event_name,
