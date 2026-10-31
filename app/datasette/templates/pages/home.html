@@ -77,6 +77,7 @@
   .ctl button.danger { background: var(--bad-bg); color: var(--bad); }
   .ctl button:disabled { opacity: .5; }
   .ctl-msg { padding: 0 14px 12px; font-size: 13px; color: var(--muted); }
+  [hidden] { display: none !important; }  /* .ctl's display: flex would otherwise win */
 </style>
 </head>
 <body>
