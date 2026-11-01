@@ -135,8 +135,11 @@ function keypad(line) {
   return {leds: parseInt(f[1], 16), text: f.slice(4).join(",").replace(/\s+/g, " ").trim()};
 }
 
-function alarmStatus(L) {
+// The entry and exit delays show only as keypad text; the lights already read armed.
+function alarmStatus(L, text) {
   if (L & 0x0001) return {cls: "bad", title: "ALARM"};
+  if (/^DISARM SYSTEM/.test(text)) return {cls: "bad", title: "Entry delay"};
+  if (/May Exit Now/.test(text)) return {cls: "warn", title: "Exit delay"};
   if (L & 0x0004) return {cls: "info", title: "Armed (away)"};
   if (L & 0x8000) return {cls: "info", title: "Armed (stay)"};
   if (L & 0x1000) return {cls: "ok", title: "Disarmed · Ready"};
@@ -167,7 +170,7 @@ async function render() {
   let cls = "warn", title = "No recent keypad data", sub = "";
   if (now) {
     const L = now.leds;
-    ({cls, title} = alarmStatus(L));
+    ({cls, title} = alarmStatus(L, now.text));
     sub = (L & 0x0008) ? "Power OK" : "On battery power";
     if (L & 0x0020) sub += " · Chime on";
   }
@@ -273,7 +276,8 @@ function openZones(line) {
 function summarize(r) {
   const name = (src, id) => live.names[src + ":" + id];
   if (r.source === "evl" && r.event_type === "keypad") {
-    return {key: "evl:status", text: alarmStatus(keypad(r.body).leds).title};
+    const k = keypad(r.body);
+    return {key: "evl:status", text: alarmStatus(k.leds, k.text).title};
   }
   if (r.source === "evl" && r.event_type === "action") return {key: null, text: r.body};
   if (r.source === "evl" && r.event_type === "zone_state") {
