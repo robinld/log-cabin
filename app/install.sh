@@ -42,7 +42,8 @@ cp -r "$SRC/home_events" "$SRC/datasette" "$ROOT/app/"
 chown -R root:root "$ROOT/app"
 
 # Stop the writers first, so a schema migration never races old code.
-systemctl stop home-events-yolink.service home-events-evl.service home-events-unifi.service home-events-lutron.service home-events-lennox.service 2>/dev/null || true
+systemctl stop home-events-yolink.service home-events-evl.service home-events-unifi.service home-events-lutron.service home-events-lennox.service \
+  home-events-tempest.service home-events-emporia.service 2>/dev/null || true
 sudo -u homeevents env DB_PATH="$DB_PATH" PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.db
 
 # --- Homebridge (YoLink sensors in HomeKit) --------------------------------
@@ -73,7 +74,8 @@ PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.wireguard
 # --- systemd --------------------------------------------------------------
 install -m 644 "$SRC"/systemd/* /etc/systemd/system/
 systemctl daemon-reload
-for unit in home-events-yolink home-events-evl home-events-unifi home-events-lutron home-events-lennox home-events-datasette \
+for unit in home-events-yolink home-events-evl home-events-unifi home-events-lutron home-events-lennox \
+            home-events-tempest home-events-emporia home-events-datasette \
             home-events-mdns0 home-events-mdns-relay home-events-homekit home-events-homebridge; do
   systemctl enable "$unit.service"
   systemctl restart "$unit.service"

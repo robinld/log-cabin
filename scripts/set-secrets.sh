@@ -9,9 +9,10 @@ NAME=${NAME:-log-cabin}
 # evl/user_code is a 4-digit alarm code for the HomeKit bridge, which sends it
 # with each change made in the Home app; without it the bridge is read-only.
 # homekit/relay_peer is the LAN address of the machine running the LAN side of
-# home_events/mdns_relay.py.
+# home_events/mdns_relay.py. tempest/token is a personal access token from the
+# Tempest web app; emporia/username and emporia/password are the Emporia app's.
 for p in yolink/uaid yolink/secret evl/host evl/password evl/user_code lutron/host lennox/host \
-         homekit/relay_peer; do
+         homekit/relay_peer tempest/token emporia/username emporia/password; do
   read -rsp "/$NAME/$p (blank to skip): " value; echo
   [ -z "$value" ] && continue
   aws ssm put-parameter --region "$REGION" --name "/$NAME/$p" --type SecureString \

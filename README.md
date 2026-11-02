@@ -16,11 +16,13 @@ Aggregate logs across various IoT systems and query them.
 | `app/home_events/flumes/unifi.py` | Syslog listener (UDP and TCP, port 5514) for the UniFi console's SIEM Server integration; stores each CEF line raw |
 | `app/home_events/flumes/lutron.py` | Read-only Lutron Caseta LEAP session (dimmer and switch levels, Pico presses, occupancy); `python -m home_events.flumes.lutron pair` gets the bridge's client certificate |
 | `app/home_events/flumes/lennox.py` | Read-only Lennox iComfort S30 local API session (zones, setpoints, equipment, alerts) |
+| `app/home_events/flumes/tempest.py` | Tempest weather station through Tempest's WebSocket API: each minute's observation, lightning and rain events; the `weather` view reads them |
+| `app/home_events/flumes/emporia.py` | Emporia energy usage per circuit, every 15 minutes, through Emporia's cloud API (via PyEmVue); the `power` view reads it |
 | `app/home_events/homekit.py` | HomeKit bridge: the panel as a Security System (Off, Home, Away), the chime as a switch, and each zone as a contact, motion or smoke sensor with low battery and trouble |
 | `app/home_events/mdns_relay.py` | Carries the bridges' Bonjour packets between the box and the home LAN, which HomeKit needs to find them |
 | `app/home_events/homebridge.py`, `app/homebridge/` | Homebridge with the YoLink plugin, sensors only: its config, written from SSM, and its packages, pinned by a lockfile |
 | `app/install.sh` | Idempotent installer the box runs on first boot and on every deploy |
-| `tests/` | pytest tests for the alarm action server, the HomeKit bridges and the relay |
+| `tests/` | pytest tests for the alarm action server, the HomeKit bridges, the relay and the flumes |
 | `scripts/` | `set-secrets.sh`, `deploy.sh`, `dashboard.sh` |
 
 ## Setup
@@ -33,6 +35,8 @@ Prerequisites: AWS CLI with credentials and the [Session Manager plugin](https:/
 - **UniFi SIEM logs** (optional, needs the WireGuard tunnel, with the gateway's VPN address in `AllowedIPs`): in UniFi, Settings → Control Plane → Integrations → Activity Logging → SIEM Server, pointed at the box's VPN address, port 5514.
 - **Lutron Caseta** (optional, needs the WireGuard tunnel): set `lutron/host` to the Smart Bridge's LAN address, deploy, then pair once while someone presses the button on the back of the bridge: run `python -m home_events.flumes.lutron pair` on the box (as root, with `/etc/home-events/env` loaded). It stores the certificate in SSM itself.
 - **Lennox S30** (optional, needs the WireGuard tunnel): set `lennox/host` to the thermostat's LAN address. Its local API has no authentication; the flume only subscribes and reads, never publishes.
+- **Tempest** (optional): a personal access token, from the Tempest web app under Settings → Data Authorizations, as `tempest/token`. The hub's own LAN broadcasts don't cross the tunnel, so this uses Tempest's cloud, which carries the same messages.
+- **Emporia** (optional): the Emporia app's email and password, as `emporia/username` and `emporia/password`. Emporia's devices have no local interface, so this uses the cloud API the app uses, which isn't officially published.
 
 ```bash
 # 0. The box deploys the latest GitHub release, so publish one first

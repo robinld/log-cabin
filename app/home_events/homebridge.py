@@ -33,13 +33,6 @@ def new_identity():
             "pin": "%03d-%02d-%03d" % (random.randrange(1000), random.randrange(100), random.randrange(1000))}
 
 
-def optional_param(name):
-    try:
-        return config.param(name)
-    except config.ssm().exceptions.ParameterNotFound:
-        return None
-
-
 def build(old, uaid, secret, kasa_hosts=()):
     """The config for Homebridge, keeping the bridge identity from old (a config or None)."""
     bridge = (old or {}).get("bridge") or {}
@@ -62,7 +55,7 @@ def build(old, uaid, secret, kasa_hosts=()):
 def main():
     path = STORAGE / "config.json"
     old = json.loads(path.read_text()) if path.exists() else None
-    kasa = (optional_param("homebridge/kasa_hosts") or "").replace(",", " ").split()
+    kasa = (config.optional_param("homebridge/kasa_hosts") or "").replace(",", " ").split()
     cfg = build(old, config.param("yolink/uaid"), config.param("yolink/secret"), kasa)
     STORAGE.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".new")

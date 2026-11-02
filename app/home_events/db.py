@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS log (
     id          INTEGER PRIMARY KEY,
     received_at TEXT NOT NULL,          -- when the box got it, ISO-8601 UTC
     ts          TEXT NOT NULL,          -- when it happened if the source says, else received_at
-    source      TEXT NOT NULL,          -- yolink | evl | unifi | lutron | lennox
+    source      TEXT NOT NULL,          -- yolink | evl | unifi | lutron | lennox | tempest | emporia
     event_type  TEXT NOT NULL,          -- what kind of thing: DoorSensor, keypad, zone_timers
     event_name  TEXT,                   -- what happened: Alert, getState, FAULT
     device_id   TEXT,                   -- YoLink deviceId, alarm zone number
@@ -201,6 +201,37 @@ FROM alarm_keypad
 WHERE (text LIKE '%BAT%' OR text LIKE '%AC LOSS%' OR text LIKE '%FAIL%' OR text LIKE '%TRBL%')
   AND substr(text, 1, 6) NOT IN ('CHECK ', 'LOBAT ')
 GROUP BY text;
+
+DROP VIEW IF EXISTS weather;
+CREATE VIEW weather AS
+-- Tempest's minute observations, from obs_st's obs array (apidocs.tempestwx.com).
+SELECT ts AS observed_at, device_id,
+       json_extract(body, '$.obs[0][7]') AS air_temp_c,
+       json_extract(body, '$.obs[0][8]') AS humidity_pct,
+       json_extract(body, '$.obs[0][6]') AS pressure_mb,
+       json_extract(body, '$.obs[0][2]') AS wind_avg_ms,
+       json_extract(body, '$.obs[0][3]') AS wind_gust_ms,
+       json_extract(body, '$.obs[0][4]') AS wind_dir_deg,
+       json_extract(body, '$.obs[0][12]') AS rain_mm,
+       json_extract(body, '$.obs[0][11]') AS solar_w_m2,
+       json_extract(body, '$.obs[0][10]') AS uv,
+       json_extract(body, '$.obs[0][15]') AS lightning_strikes,
+       json_extract(body, '$.obs[0][16]') AS battery_v,
+       id
+FROM log WHERE source = 'tempest' AND event_type = 'obs_st';
+
+DROP VIEW IF EXISTS power;
+CREATE VIEW power AS
+-- Emporia usage per circuit for each window ending at "until": kWh, and the
+-- average kW over the window (event_name is its length, e.g. 15MIN).
+SELECT l.ts AS until, json_extract(d.value, '$.deviceGid') AS device_gid,
+       json_extract(c.value, '$.channelNum') AS channel, json_extract(c.value, '$.name') AS name,
+       json_extract(c.value, '$.usage') AS kwh,
+       json_extract(c.value, '$.usage') * 60.0 / cast(l.event_name AS integer) AS avg_kw,
+       l.id
+FROM log l, json_each(l.body, '$.deviceListUsages.devices') AS d,
+     json_each(d.value, '$.channelUsages') AS c
+WHERE l.source = 'emporia' AND l.event_type = 'usage';
 """
 
 def iso(ts_ms=None):
