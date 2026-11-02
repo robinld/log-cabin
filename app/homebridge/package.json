@@ -3,6 +3,7 @@
   "description": "Homebridge and its plugins, installed on the box by install.sh with npm ci",
   "dependencies": {
     "homebridge": "2.4.0",
-    "homebridge-yolink": "1.7.6"
+    "homebridge-yolink": "1.7.6",
+    "homebridge-tplink-smarthome": "8.0.4"
   }
 }

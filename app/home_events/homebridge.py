@@ -1,11 +1,12 @@
 """Write Homebridge's config.json from SSM.
 
-Homebridge runs beside our own HomeKit bridge, for YoLink sensors, as the
+Homebridge runs beside our own HomeKit bridge, for YoLink sensors and Kasa
+plugs (at the addresses in SSM homebridge/kasa_hosts, if set), as the
 homebridge user from /data/homebridge (the root disk is too small for its
 packages). It advertises on mdns0 like our bridge; the relay points its
 address records at the box's WireGuard address.
 
-Only sensor types go to HomeKit: a relay or valve there could be switched off
+Only YoLink sensor types go to HomeKit: a relay or valve there could be switched off
 from any Home device. The bridge's identity (username and pin) is kept from
 the existing file, so re-running never unpairs it from Home. Run as root from
 install.sh; safe to re-run.
@@ -32,7 +33,14 @@ def new_identity():
             "pin": "%03d-%02d-%03d" % (random.randrange(1000), random.randrange(100), random.randrange(1000))}
 
 
-def build(old, uaid, secret):
+def optional_param(name):
+    try:
+        return config.param(name)
+    except config.ssm().exceptions.ParameterNotFound:
+        return None
+
+
+def build(old, uaid, secret, kasa_hosts=()):
     """The config for Homebridge, keeping the bridge identity from old (a config or None)."""
     bridge = (old or {}).get("bridge") or {}
     identity = {k: bridge[k] for k in ("username", "pin") if k in bridge} or new_identity()
@@ -43,14 +51,19 @@ def build(old, uaid, secret):
         "platforms": [
             {"platform": "YoLink", "name": "YoLink", "userAccessId": uaid, "secretKey": secret,
              "allDevices": False, "includeTypes": SENSORS},
-        ],
+        ] + ([
+            # Discovery broadcasts don't cross the tunnel, so each plug is listed.
+            {"platform": "TplinkSmarthome", "name": "Kasa", "deviceTypes": ["plug"],
+             "devices": [{"host": h} for h in kasa_hosts]},
+        ] if kasa_hosts else []),
     }
 
 
 def main():
     path = STORAGE / "config.json"
     old = json.loads(path.read_text()) if path.exists() else None
-    cfg = build(old, config.param("yolink/uaid"), config.param("yolink/secret"))
+    kasa = (optional_param("homebridge/kasa_hosts") or "").replace(",", " ").split()
+    cfg = build(old, config.param("yolink/uaid"), config.param("yolink/secret"), kasa)
     STORAGE.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".new")
     tmp.write_text(json.dumps(cfg, indent=2))

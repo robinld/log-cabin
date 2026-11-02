@@ -21,3 +21,9 @@ def test_build_sends_only_sensors_to_homekit():
     assert yolink["allDevices"] is False
     assert "Switch" not in yolink["includeTypes"] and "LeakSensor" in yolink["includeTypes"]
     assert (yolink["userAccessId"], yolink["secretKey"]) == ("ua", "sec")
+
+
+def test_build_lists_kasa_plugs_only_when_there_are_some():
+    assert len(homebridge.build(None, "ua", "sec")["platforms"]) == 1
+    kasa = homebridge.build(None, "ua", "sec", ["192.0.2.7"])["platforms"][1]
+    assert kasa["platform"] == "TplinkSmarthome" and kasa["devices"] == [{"host": "192.0.2.7"}]
