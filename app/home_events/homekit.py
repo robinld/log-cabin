@@ -1,7 +1,9 @@
 """HomeKit bridge for the alarm panel: arm, disarm, chime, and every zone.
 
 Presents the panel as a HomeKit Security System (Off, Home = Stay, Away), the
-chime as a switch, and each zone as a contact, motion or smoke sensor, with
+chime as a switch, the entry delay as a contact sensor that is open while the
+keypad counts down to the alarm (HomeKit has no such state, and a sensor can
+notify), and each zone as a contact, motion or smoke sensor, with
 low battery and trouble as its status flags. State comes from the EVL flume's
 action server (GET /status) and zones from the log: names
 from the keypad, open zones from the latest zone dump, and troubles from the
@@ -186,6 +188,18 @@ class Chime(Accessory):
             self.on.set_value(chime)
 
 
+class EntryDelay(Accessory):
+    category = CATEGORY_SENSOR
+
+    def __init__(self, driver, name):
+        super().__init__(driver, name, aid=50)  # fixed, clear of the zones' 100 + zone
+        self.state = named_service(self, "ContactSensor").configure_char("ContactSensorState", value=0)
+
+    def update(self, counting_down):
+        if self.state.value != int(counting_down):
+            self.state.set_value(int(counting_down))
+
+
 class Zone(Accessory):
     category = CATEGORY_SENSOR
 
@@ -216,8 +230,10 @@ class AlarmBridge(Bridge):
         self.db_path, self.code = db_path, code
         self.alarm = Alarm(driver, "Alarm", self.send)
         self.chime = Chime(driver, "Chime", self.send)
+        self.entry_delay = EntryDelay(driver, "Entry Delay")
         self.add_accessory(self.alarm)
         self.add_accessory(self.chime)
+        self.add_accessory(self.entry_delay)
         self.zones = {}
         self.add_zones(self.known_zones())
 
@@ -300,6 +316,7 @@ class AlarmBridge(Bridge):
             if "state" in st:
                 self.alarm.update(st["state"], bool(st["ready"]))
                 self.chime.update(bool(st["chime"]))
+                self.entry_delay.update(bool(st.get("entry_delay")))
         except OSError as e:
             log.warning("status unavailable: %s", e)
 

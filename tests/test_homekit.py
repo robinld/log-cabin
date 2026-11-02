@@ -179,3 +179,14 @@ def test_a_zone_is_added_as_soon_as_the_keypad_names_it(setup):
     assert changed == [True]
     poll(b)
     assert changed == [True]  # nothing new
+
+
+def test_entry_delay_sensor_opens_while_the_keypad_counts_down(setup):
+    actions, _, bridge = setup
+    b = bridge()
+    actions.panel.update(state="away", entry_delay=True)
+    poll(b)
+    assert b.entry_delay.state.value == 1 and b.alarm.current.value == hk.AWAY
+    actions.panel.update(state="disarmed", entry_delay=False)
+    poll(b)
+    assert b.entry_delay.state.value == 0

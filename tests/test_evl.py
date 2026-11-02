@@ -51,7 +51,7 @@ def test_status_reads_the_keypad_leds_and_forgets_them_when_disconnected(rows):
     f.writer = object()
     f.store("%00,01,1C38,08,00,DISARMED CHIME$")
     assert f.status() == {"connected": True, "state": "disarmed", "ready": True,
-                          "bypass": True, "chime": True}
+                          "bypass": True, "chime": True, "entry_delay": False}
     f.store("%00,01,8008,08,00,ARMED STAY$")
     assert f.status()["state"] == "stay"
     f.writer = f.leds = None  # what session() does when it ends
@@ -168,3 +168,19 @@ def test_server_status_and_action(rows):
     assert request(f, post(b'{"action": "chime", "code": "1234"}')) == (200, {"ok": True})
     assert request(f, post(b'{"action": "chime", "code": "1234"}')) == (409, {"error": "one action at a time"})
     assert request(f, b"GET /alarm/status HTTP/1.1\r\n\r\n")[0] == 404
+
+
+def test_entry_delay_lasts_from_the_disarm_prompt_until_a_disarm_or_an_alarm(rows):
+    f = evl.Flume(None, "host", "password")
+    f.writer = object()
+    seen = []
+    for screen in ["0C0C,08,00,ARMED ***AWAY***** ALL SECURE **",
+                   "0C0C,08,05,DISARM SYSTEM   or alarm occurs ",
+                   "0C0C,10,00,FAULT 10 FRONT DOOR",  # another screen in the countdown
+                   "1C08,08,01,****DISARMED****  Ready to Arm  ",
+                   "8C08,08,05,DISARM SYSTEM   or alarm occurs ",
+                   "800B,10,00,ALARM 10 FRONT  DOOR            ",
+                   "000C,60,05,ARMED ***AWAY***May Exit Now  60"]:  # the exit delay isn't one
+        f.store(f"%00,01,{screen}$")
+        seen.append(f.status()["entry_delay"])
+    assert seen == [False, True, True, False, True, False, False]

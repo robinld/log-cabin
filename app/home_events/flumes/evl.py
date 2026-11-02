@@ -38,6 +38,9 @@ REPEAT_EVERY_S = 30
 # Sent only on change, so a repeat is a real change back (open, closed, open
 # again) and is always stored: zone state, partition state, Contact ID report.
 CHANGES = ("%01,", "%02,", "%03,")
+# The keypad's prompt through the entry delay. It ends in a disarm or an alarm;
+# the partition state isn't a guide, as it can go back to armed partway through.
+ENTRY_DELAY = "DISARM SYSTEM"
 
 ACTION_PORT = 8002
 # Honeywell keypad commands: user code + this key.
@@ -83,6 +86,7 @@ class Flume:
         self.last_stored = {}  # line -> time stored
         self.writer = None  # the live session, for actions
         self.leds = None  # latest keypad LED bits
+        self.entry_delay = False
         self.last_action = 0  # when the last action finished
         self.action_lock = asyncio.Lock()  # one action's keys at a time
         self.key_ack = None  # future for the pending ^03's reply
@@ -100,6 +104,12 @@ class Flume:
                 self.leds = int(line.split(",")[2], 16)
             except (IndexError, ValueError):
                 pass
+            else:
+                text = line[:-1].split(",", 5)[-1]
+                if text.startswith(ENTRY_DELAY):
+                    self.entry_delay = True
+                elif self.leds & 0x0001 or not self.leds & 0x8004 or text.startswith("ARMED"):
+                    self.entry_delay = False  # alarm, disarmed, or armed and quiet
         now = time.time()
         if not line.startswith(CHANGES) and now - self.last_stored.get(line, 0) < REPEAT_EVERY_S:
             return
@@ -145,6 +155,7 @@ class Flume:
                 dumper.cancel()
         finally:
             self.writer = self.leds = None  # nothing below is current any more
+            self.entry_delay = False
             writer.close()
 
     def status(self):
@@ -154,7 +165,8 @@ class Flume:
         state = ("alarm" if L & 0x0001 else "away" if L & 0x0004 else "stay" if L & 0x8000
                  else "disarmed")
         return {"connected": True, "state": state, "ready": bool(L & 0x1000),
-                "bypass": bool(L & 0x0010), "chime": bool(L & 0x0020)}
+                "bypass": bool(L & 0x0010), "chime": bool(L & 0x0020),
+                "entry_delay": self.entry_delay}
 
     async def act(self, action, code):
         """Send one of ACTIONS. Returns an error message, or None once sent."""
