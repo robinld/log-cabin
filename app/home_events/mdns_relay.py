@@ -13,6 +13,8 @@ as received, over one TCP connection on the tunnel:
         packets (KEEP) and re-multicasts everything the box sends.
 
 HomeKit itself (HAP) then connects to the bridge directly over the tunnel.
+Homebridge can only advertise mdns0's own address, so the box side rewrites it
+to its WireGuard address on the way out.
 """
 
 import hashlib
@@ -69,6 +71,32 @@ def keepalive(t):
     return t
 
 
+def skip_name(data, i):
+    """Index just past the DNS name at data[i]: labels, then a 0 or a 2-byte pointer."""
+    while (n := data[i]) and n < 0xC0:
+        i += 1 + n
+    return i + (2 if n else 1)
+
+
+def readdress(data, old, new):
+    """The mDNS packet with A records for address old pointing at new instead."""
+    try:
+        questions, *records = struct.unpack("!4H", data[4:12])
+        out, i = bytearray(data), 12
+        for _ in range(questions):
+            i = skip_name(data, i) + 4
+        for _ in range(sum(records)):
+            i = skip_name(data, i)
+            rtype, _, _, n = struct.unpack("!HHIH", data[i:i + 10])
+            i += 10
+            if rtype == 1 and data[i:i + n] == old:
+                out[i:i + n] = new
+            i += n
+        return bytes(out)
+    except (struct.error, IndexError):
+        return data
+
+
 class Outgoing:
     """LAN side: connect to the box, retrying until it answers."""
 
@@ -116,8 +144,9 @@ class Incoming:
         return self.accept() if self.srv in ready else None
 
 
-def relay(u, link, forward_all, peer):
-    """Copy packets both ways; reconnect when the TCP connection drops or is replaced."""
+def relay(u, link, forward_all, peer, addresses=None):
+    """Copy packets both ways; reconnect when the TCP connection drops or is replaced.
+    addresses: (old, new) packed IPv4 addresses to rewrite in A records sent out."""
     injected = {}  # payload hash -> time, so our own re-multicasts aren't sent back
     while True:
         t, buf = link.connect(), b""
@@ -136,6 +165,8 @@ def relay(u, link, forward_all, peer):
                     data, src = u.recvfrom(9000)
                     if src[0] != peer and hashlib.sha1(data).digest() not in injected and (
                             forward_all or any(k in data for k in KEEP)):
+                        if addresses:
+                            data = readdress(data, *addresses)
                         t.sendall(struct.pack("!H", len(data)) + data)
                 if t in r:
                     chunk = t.recv(65536)
@@ -161,7 +192,8 @@ def main():
         config.setup_logging()
         peer = config.param("homekit/relay_peer")
         listen_ip = wg_address()
-        relay(multicast_socket(MDNS_IP, True), Incoming(listen_ip, peer), True, peer)
+        relay(multicast_socket(MDNS_IP, True), Incoming(listen_ip, peer), True, peer,
+              (socket.inet_aton(MDNS_IP), socket.inet_aton(listen_ip)))
     elif side == "lan" and len(sys.argv) == 4:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
         lan_ip, box_ip = sys.argv[2], sys.argv[3]
