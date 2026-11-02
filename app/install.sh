@@ -45,6 +45,28 @@ chown -R root:root "$ROOT/app"
 systemctl stop home-events-yolink.service home-events-evl.service home-events-unifi.service home-events-lutron.service home-events-lennox.service 2>/dev/null || true
 sudo -u homeevents env DB_PATH="$DB_PATH" PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.db
 
+# --- Homebridge (YoLink sensors in HomeKit) --------------------------------
+# Its packages live on /data: the root disk is too small for them. npm ci runs
+# only when the lockfile changes, and its cache goes too.
+HB=/data/homebridge
+dnf install -y nodejs22 nodejs22-npm
+id homebridge >/dev/null 2>&1 || useradd --system --home-dir "$HB/storage" --shell /sbin/nologin homebridge
+# Before it was in the repo: its own unit, and its storage beside the packages.
+if [ -f /etc/systemd/system/homebridge.service ]; then
+  systemctl disable --now homebridge.service
+  rm /etc/systemd/system/homebridge.service
+fi
+[ -d /data/homebridge-storage ] && [ ! -e "$HB/storage" ] && mv /data/homebridge-storage "$HB/storage"
+usermod --home "$HB/storage" homebridge
+mkdir -p "$HB/storage"
+if ! cmp -s "$SRC/homebridge/package-lock.json" "$HB/package-lock.json"; then
+  cp "$SRC"/homebridge/package.json "$SRC"/homebridge/package-lock.json "$HB/"
+  (cd "$HB" && npm-22 ci --ignore-scripts --omit=dev --no-audit --no-fund --cache "$HB/.npm-cache")
+  rm -rf "$HB/.npm-cache"
+fi
+PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.homebridge
+chown -R homebridge:homebridge "$HB/storage"
+
 # --- WireGuard to the home network (skipped until its secret is set) ------
 PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.wireguard
 
@@ -52,7 +74,7 @@ PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.wireguard
 install -m 644 "$SRC"/systemd/* /etc/systemd/system/
 systemctl daemon-reload
 for unit in home-events-yolink home-events-evl home-events-unifi home-events-lutron home-events-lennox home-events-datasette \
-            home-events-mdns0 home-events-mdns-relay home-events-homekit; do
+            home-events-mdns0 home-events-mdns-relay home-events-homekit home-events-homebridge; do
   systemctl enable "$unit.service"
   systemctl restart "$unit.service"
 done

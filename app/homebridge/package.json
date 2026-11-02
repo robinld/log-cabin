@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "description": "Homebridge and its plugins, installed on the box by install.sh with npm ci",
+  "dependencies": {
+    "homebridge": "2.4.0",
+    "homebridge-yolink": "1.7.6"
+  }
+}

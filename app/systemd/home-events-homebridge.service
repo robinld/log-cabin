@@ -1,0 +1,17 @@
+[Unit]
+Description=Homebridge for YoLink sensors, advertised through the Bonjour relay
+After=network-online.target home-events-mdns0.service
+Wants=network-online.target
+Requires=home-events-mdns0.service
+RequiresMountsFor=/data
+StartLimitIntervalSec=0
+
+[Service]
+User=homebridge
+ExecStart=/usr/bin/node-22 /data/homebridge/node_modules/homebridge/bin/homebridge -U /data/homebridge/storage -P /data/homebridge/node_modules --strict-plugin-resolution
+Restart=always
+RestartSec=30
+MemoryMax=400M
+
+[Install]
+WantedBy=multi-user.target
