@@ -8,21 +8,36 @@ address records at the box's WireGuard address.
 
 Only YoLink sensor types go to HomeKit: a relay or valve there could be switched off
 from any Home device. The bridge's identity (username and pin) is kept from
-the existing file, so re-running never unpairs it from Home. Run as root from
-install.sh; safe to re-run.
+the existing file, so re-running never unpairs it from Home.
+
+Once Homebridge is paired with Home, this also pairs the Homebridge flume as
+one more, non-admin, HomeKit controller: it adds the flume's public key to
+Homebridge's pairing file (Homebridge must be stopped, or it would write its
+own copy back) and writes the flume's key and Homebridge's to CONTROLLER,
+readable only by the flume's user. Not before: a pairing makes HAP-NodeJS
+treat the bridge as paired, so Home could no longer add it.
+
+Run as root from install.sh, with Homebridge stopped; safe to re-run.
 """
 import json
 import os
 import random
 import shutil
 import sys
+import uuid
 from pathlib import Path
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from home_events import config
 
 STORAGE = Path("/data/homebridge/storage")
 PORT = 51828
 USER = "homebridge"
+CONTROLLER = Path("/data/homebridge-controller.json")
+FLUME_USER = "homeevents"
+USER_PERMISSION, ADMIN_PERMISSION = 0, 1
 SENSORS = ["DoorSensor", "LeakSensor", "THSensor", "MotionSensor", "VibrationSensor",
            "COSmokeSensor", "PowerFailureAlarm"]
 
@@ -55,18 +70,69 @@ def build(old, uaid, secret, kasa_hosts=()):
     }
 
 
+def new_controller():
+    key = ed25519.Ed25519PrivateKey.generate()
+    raw = serialization.Encoding.Raw
+    return {"id": str(uuid.uuid4()).upper(),
+            "ltsk": key.private_bytes(raw, serialization.PrivateFormat.Raw,
+                                      serialization.NoEncryption()).hex(),
+            "ltpk": key.public_key().public_bytes(raw, serialization.PublicFormat.Raw).hex()}
+
+
+def accessory_info_path(username):
+    """HAP-NodeJS's pairing file for the bridge with this username."""
+    return STORAGE / "persist" / f"AccessoryInfo.{username.replace(':', '').upper()}.json"
+
+
+def has_admin(info):
+    perms = info.get("pairedClientsPermission") or {}
+    # Pairings saved without a permission are admins (AccessoryInfo.load).
+    return any(perms.get(u, ADMIN_PERMISSION) == ADMIN_PERMISSION for u in info.get("pairedClients") or {})
+
+
+def with_controller(info, controller):
+    """info with the controller paired as a non-admin, or None if it already is."""
+    clients = dict(info.get("pairedClients") or {})
+    perms = dict(info.get("pairedClientsPermission") or {})
+    if clients.get(controller["id"]) == controller["ltpk"] and perms.get(controller["id"]) == USER_PERMISSION:
+        return None
+    clients[controller["id"]] = controller["ltpk"]
+    perms[controller["id"]] = USER_PERMISSION
+    return {**info, "pairedClients": clients, "pairedClientsPermission": perms}
+
+
+def write_private(path, text, owner):
+    tmp = path.with_suffix(".new")
+    tmp.write_text(text)
+    os.chmod(tmp, 0o600)
+    shutil.chown(tmp, owner, owner)
+    tmp.replace(path)
+
+
+def pair_flume(username):
+    path = accessory_info_path(username)
+    info = json.loads(path.read_text()) if path.exists() else None
+    if not info or not has_admin(info):
+        return "flume not paired: pair Homebridge with Home, then deploy again"
+    controller = json.loads(CONTROLLER.read_text()) if CONTROLLER.exists() else new_controller()
+    write_private(CONTROLLER, json.dumps({**controller, "accessory_id": username,
+                                          "accessory_ltpk": info["signPk"], "port": PORT}), FLUME_USER)
+    updated = with_controller(info, controller)
+    if updated:
+        write_private(path, json.dumps(updated), USER)
+        return "flume paired"
+    return "flume already paired"
+
+
 def main():
     path = STORAGE / "config.json"
     old = json.loads(path.read_text()) if path.exists() else None
     kasa = (config.optional_param("homebridge/kasa_hosts") or "").replace(",", " ").split()
     cfg = build(old, config.param("yolink/uaid"), config.param("yolink/secret"), kasa)
     STORAGE.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".new")
-    tmp.write_text(json.dumps(cfg, indent=2))
-    os.chmod(tmp, 0o600)
-    shutil.chown(tmp, USER, USER)
-    tmp.replace(path)
+    write_private(path, json.dumps(cfg, indent=2), USER)
     print("homebridge config ok" + ("" if old else ": new bridge, pair it in Home with " + cfg["bridge"]["pin"]))
+    print("homebridge " + pair_flume(cfg["bridge"]["username"]))
 
 
 if __name__ == "__main__":

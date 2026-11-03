@@ -1,0 +1,17 @@
+[Unit]
+Description=Homebridge flume: every change HomeKit is told about (read-only)
+After=home-events-homebridge.service
+Wants=home-events-homebridge.service
+RequiresMountsFor=/data
+StartLimitIntervalSec=0
+
+[Service]
+User=homeevents
+EnvironmentFile=/etc/home-events/env
+Environment=PYTHONPATH=/opt/home-events/app PYTHONUNBUFFERED=1
+ExecStart=/opt/home-events/venv/bin/python -m home_events.flumes.homebridge
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

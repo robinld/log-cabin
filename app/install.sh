@@ -43,7 +43,7 @@ chown -R root:root "$ROOT/app"
 
 # Stop the writers first, so a schema migration never races old code.
 systemctl stop home-events-yolink.service home-events-evl.service home-events-unifi.service home-events-lutron.service home-events-lennox.service \
-  home-events-tempest.service home-events-emporia.service 2>/dev/null || true
+  home-events-tempest.service home-events-emporia.service home-events-homebridge-flume.service 2>/dev/null || true
 sudo -u homeevents env DB_PATH="$DB_PATH" PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.db
 
 # --- Homebridge (YoLink sensors in HomeKit) --------------------------------
@@ -65,6 +65,9 @@ if ! cmp -s "$SRC/homebridge/package-lock.json" "$HB/package-lock.json"; then
   (cd "$HB" && npm-22 ci --ignore-scripts --omit=dev --no-audit --no-fund --cache "$HB/.npm-cache")
   rm -rf "$HB/.npm-cache"
 fi
+# Stopped while its config and pairings are written: it saves its own copy of
+# the pairings, which would drop the flume's. The unit loop below starts it.
+systemctl stop home-events-homebridge.service 2>/dev/null || true
 PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.homebridge
 chown -R homebridge:homebridge "$HB/storage"
 
@@ -76,7 +79,8 @@ install -m 644 "$SRC"/systemd/* /etc/systemd/system/
 systemctl daemon-reload
 for unit in home-events-yolink home-events-evl home-events-unifi home-events-lutron home-events-lennox \
             home-events-tempest home-events-emporia home-events-datasette \
-            home-events-mdns0 home-events-mdns-relay home-events-homekit home-events-homebridge; do
+            home-events-mdns0 home-events-mdns-relay home-events-homekit home-events-homebridge \
+            home-events-homebridge-flume; do
   systemctl enable "$unit.service"
   systemctl restart "$unit.service"
 done

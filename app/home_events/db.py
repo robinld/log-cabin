@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS log (
     id          INTEGER PRIMARY KEY,
     received_at TEXT NOT NULL,          -- when the box got it, ISO-8601 UTC
     ts          TEXT NOT NULL,          -- when it happened if the source says, else received_at
-    source      TEXT NOT NULL,          -- yolink | evl | unifi | lutron | lennox | tempest | emporia
+    source      TEXT NOT NULL,          -- yolink | evl | unifi | lutron | lennox | tempest | emporia | homebridge
     event_type  TEXT NOT NULL,          -- what kind of thing: DoorSensor, keypad, zone_timers
     event_name  TEXT,                   -- what happened: Alert, getState, FAULT
     device_id   TEXT,                   -- YoLink deviceId, alarm zone number
@@ -34,7 +34,7 @@ CREATE INDEX IF NOT EXISTS log_named ON log(source, event_type, event_name, devi
 VIEWS = """
 DROP VIEW IF EXISTS device_names;
 CREATE VIEW device_names AS
--- YoLink and Lutron names from their newest device lists; alarm zones as the keypad named them.
+-- YoLink, Lutron and Homebridge names from their newest device lists; alarm zones as the keypad named them.
 WITH latest AS (
     SELECT body FROM log
     WHERE source = 'yolink' AND event_name = 'getDeviceList'
@@ -55,7 +55,22 @@ SELECT 'lutron', substr(json_extract(z.value, '$.href'), 2),
 FROM (SELECT body FROM log WHERE source = 'lutron' AND event_name = '/device'
       ORDER BY id DESC LIMIT 1) AS latest_lutron,
      json_each(latest_lutron.body, '$.Body.Devices') AS d,
-     json_each(d.value, '$.LocalZones') AS z;
+     json_each(d.value, '$.LocalZones') AS z
+UNION ALL
+-- Homebridge accessories by aid: each one's Accessory Information service
+-- (3E) has its Name (23) and Manufacturer (20). The type is the manufacturer.
+SELECT 'homebridge', cast(json_extract(a.value, '$.aid') AS text),
+       max(CASE WHEN upper(json_extract(c.value, '$.type')) IN ('23', '00000023-0000-1000-8000-0026BB765291')
+                THEN json_extract(c.value, '$.value') END),
+       max(CASE WHEN upper(json_extract(c.value, '$.type')) IN ('20', '00000020-0000-1000-8000-0026BB765291')
+                THEN json_extract(c.value, '$.value') END)
+FROM (SELECT body FROM log WHERE source = 'homebridge' AND event_type = 'accessories'
+      ORDER BY id DESC LIMIT 1) AS latest_hb,
+     json_each(latest_hb.body, '$.accessories') AS a,
+     json_each(a.value, '$.services') AS s,
+     json_each(s.value, '$.characteristics') AS c
+WHERE upper(json_extract(s.value, '$.type')) IN ('3E', '0000003E-0000-1000-8000-0026BB765291')
+GROUP BY json_extract(a.value, '$.aid');
 
 DROP VIEW IF EXISTS events;
 CREATE VIEW events AS
@@ -201,6 +216,15 @@ FROM alarm_keypad
 WHERE (text LIKE '%BAT%' OR text LIKE '%AC LOSS%' OR text LIKE '%FAIL%' OR text LIKE '%TRBL%')
   AND substr(text, 1, 6) NOT IN ('CHECK ', 'LOBAT ')
 GROUP BY text;
+
+DROP VIEW IF EXISTS homebridge_changes;
+CREATE VIEW homebridge_changes AS
+-- What HomeKit was told: each change Homebridge announced, e.g. Heater / Outlet / On / 1.
+SELECT l.ts, l.device_id AS aid, n.name AS device_name, n.type AS manufacturer,
+       l.event_type AS service, l.event_name AS characteristic,
+       json_extract(l.body, '$.value') AS value, l.id
+FROM log l LEFT JOIN device_names n ON n.source = 'homebridge' AND n.device_id = l.device_id
+WHERE l.source = 'homebridge' AND l.event_type != 'accessories';
 
 DROP VIEW IF EXISTS weather;
 CREATE VIEW weather AS
