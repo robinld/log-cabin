@@ -43,7 +43,10 @@ def build(old, uaid, secret, kasa_hosts=()):
                    "bind": ["0.0.0.0", "mdns0"], "advertiser": "ciao"},
         "platforms": [
             {"platform": "YoLink", "name": "YoLink", "userAccessId": uaid, "secretKey": secret,
-             "allDevices": False, "includeTypes": SENSORS},
+             "allDevices": False, "includeTypes": SENSORS,
+             # Off, the plugin logs each state it receives at info; on (its
+             # default), only at debug, which Homebridge doesn't record.
+             "liteLog": False},
         ] + ([
             # Discovery broadcasts don't cross the tunnel, so each plug is listed.
             {"platform": "TplinkSmarthome", "name": "Kasa", "deviceTypes": ["plug"],

@@ -21,6 +21,7 @@ def test_build_sends_only_sensors_to_homekit():
     assert yolink["allDevices"] is False
     assert "Switch" not in yolink["includeTypes"] and "LeakSensor" in yolink["includeTypes"]
     assert (yolink["userAccessId"], yolink["secretKey"]) == ("ua", "sec")
+    assert yolink["liteLog"] is False  # so each received state is in the journal
 
 
 def test_build_lists_kasa_plugs_only_when_there_are_some():
