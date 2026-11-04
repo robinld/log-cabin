@@ -62,13 +62,13 @@
   .ev + .ev { border-top: 1px solid var(--line); }
   .ev .t { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
   .ev .src { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
-             flex: none; width: 46px; color: var(--muted); }
+             flex: none; width: 46px; overflow: hidden; color: var(--muted); }
   .ev .txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ev.open .txt { white-space: normal; }
   .ev.new { animation: flash 2s ease-out; }
   @keyframes flash { from { background: var(--info-bg); } to { background: transparent; } }
   .s-evl { color: var(--bad) !important; } .s-yolink { color: var(--ok) !important; }
-  .s-homebridge { color: var(--warn) !important; }
+  .s-homebridge { color: var(--text) !important; }
   .s-unifi { color: var(--info) !important; } .s-lutron { color: var(--warn) !important; }
 </style>
 </head>
@@ -256,7 +256,7 @@ const LIVE_SQL = `select id, received_at, source, event_type, event_name, device
     or (source = 'homebridge' and event_type in ('Outlet', 'Switch', 'Lightbulb') and event_name = 'On'))
   order by id limit 1000`;
 const LIVE_LABEL = {evl: "Alarm", yolink: "YoLink", unifi: "UniFi", lutron: "Lutron", lennox: "Lennox",
-                    homebridge: "Homebridge"};
+                    homebridge: "Bridge"};  // the label column fits six letters
 const LIVE_KEEP = 300;
 const live = {since: null, names: {}, last: {}, zones: null, lennox: {}, items: [], open: new Set()};
 
