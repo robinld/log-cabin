@@ -1,17 +1,24 @@
 """SQLite storage. One file, WAL mode, every commit fsynced.
 
 Everything goes in one append-only table, `log`: what arrived, as it arrived,
-plus a few columns copied out of it for querying. Names, state changes,
-health and the alarm's zones are all views, so they can change at any time
-without touching stored data.
+plus a few columns copied out of it for querying, and `parsed`, what its
+flume's parse() made of it (see parsing.py). body is never changed; parsed
+can be recomputed from it at any time (python -m home_events.reparse). Names,
+state changes, health and the alarm's zones are all views, so they can change
+at any time without touching stored data.
 
 Run as a module to create or upgrade the schema:  python -m home_events.db
 """
 
 import json
+import logging
 import os
 import sqlite3
 import time
+
+from . import parsing
+
+log = logging.getLogger("db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS log (
@@ -22,7 +29,9 @@ CREATE TABLE IF NOT EXISTS log (
     event_type  TEXT NOT NULL,          -- what kind of thing: DoorSensor, keypad, zone_timers
     event_name  TEXT,                   -- what happened: Alert, getState, FAULT
     device_id   TEXT,                   -- YoLink deviceId, alarm zone number
-    body        TEXT NOT NULL           -- the message as received: JSON, or the EVL's raw line
+    body        TEXT NOT NULL,          -- the message as received: JSON, or the EVL's raw line
+    parsed      TEXT,                   -- JSON: what the flume's parse() made of body, if anything
+    parser      INTEGER                 -- the PARSE_VERSION that made parsed; NULL if it failed or there is none
 );
 CREATE INDEX IF NOT EXISTS log_ts ON log(ts);
 CREATE INDEX IF NOT EXISTS log_source_type ON log(source, event_type, id);
@@ -277,21 +286,37 @@ def connect(path=None):
     return conn
 
 
+# Columns added since the table was first made, for databases made before them.
+ADDED_COLUMNS = {"parsed": "TEXT", "parser": "INTEGER"}
+
+
 def init(conn):
     conn.executescript(SCHEMA)
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(log)")}
+    for name, kind in ADDED_COLUMNS.items():
+        if name not in have:
+            conn.execute(f"ALTER TABLE log ADD COLUMN {name} {kind}")
     conn.executescript(VIEWS)
 
 
 def append(conn, *, source, event_type, event_name, body, ts_ms=None, device_id=None):
-    """Append one row. body is stored as given if it is a string, else as JSON."""
+    """Append one row. body is stored as given if it is a string, else as JSON.
+
+    It is parsed on the way in. A parse() that fails never loses the row: it
+    is stored without parsed, and the next reparse tries it again."""
     if not isinstance(body, str):
         body = json.dumps(body, separators=(",", ":"))
+    try:
+        parsed, parser = parsing.parse(source, event_type, event_name, body)
+    except Exception:
+        log.warning("couldn't parse a %s %s message; stored it unparsed", source, event_type, exc_info=True)
+        parsed = parser = None
     now = iso()
     conn.execute(
-        """INSERT INTO log (received_at, ts, source, event_type, event_name, device_id, body)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO log (received_at, ts, source, event_type, event_name, device_id, body, parsed, parser)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (now, now if ts_ms is None else iso(ts_ms), source, event_type, event_name,
-         device_id, body),
+         device_id, body, parsed, parser),
     )
 
 

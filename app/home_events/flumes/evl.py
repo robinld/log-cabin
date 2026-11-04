@@ -76,6 +76,90 @@ def evl_fields(line):
     return kind, None, None
 
 
+# --------------------------------------------------------------- parse --
+
+PARSE_VERSION = 1
+
+# Keypad LED bits (EnvisaLink TPI, Honeywell): bit -> the light it is.
+LEDS = {0: "alarm", 1: "alarm_in_memory", 2: "armed_away", 3: "ac_present", 4: "bypass",
+        5: "chime", 7: "armed_instant", 8: "fire_alarm", 9: "trouble", 12: "ready",
+        13: "fire", 14: "low_battery", 15: "armed_stay"}
+# %02 partition states, one byte per partition.
+PARTITION_STATES = {1: "ready", 2: "ready (zones bypassed)", 3: "not ready", 4: "armed stay",
+                    5: "armed away", 6: "armed instant", 7: "exit delay", 8: "in alarm",
+                    9: "alarm in memory", 10: "armed away (zero entry delay)"}
+# Contact ID event codes seen from this panel, and the usual ones.
+CID_EVENTS = {110: "fire", 120: "panic", 130: "burglary", 131: "perimeter burglary",
+              132: "interior burglary", 134: "entry/exit burglary", 137: "tamper",
+              301: "AC power lost", 302: "low system battery", 344: "RF jam",
+              373: "fire loop trouble", 380: "sensor trouble", 381: "lost supervision (RF)",
+              383: "sensor tamper", 384: "low battery (RF)", 401: "disarmed/armed by user",
+              403: "auto-armed", 406: "cancelled", 407: "remote arm/disarm", 408: "quick arm",
+              441: "armed stay", 570: "zone bypassed", 602: "periodic test"}
+
+
+def alarm_status(leds, text):
+    """What the keypad says the system is doing, as the Home page shows it."""
+    if leds & 0x0001:
+        return "alarm"
+    if text.startswith(ENTRY_DELAY):
+        return "entry delay"
+    if "May Exit Now" in text:
+        return "exit delay"
+    if leds & 0x0004:
+        return "armed away"
+    if leds & 0x8000:
+        return "armed stay"
+    return "disarmed, ready" if leds & 0x1000 else "disarmed, not ready"
+
+
+def bits(hex_bytes):
+    """A run of hex bytes -> the 1-based numbers of the bits set, lowest bit of the first byte first."""
+    return [i * 8 + b + 1 for i in range(len(hex_bytes) // 2)
+            for b in range(8) if int(hex_bytes[i * 2:i * 2 + 2], 16) & (1 << b)]
+
+
+def parse(event_type, event_name, body):
+    """A stored TPI line -> what it says: the keypad's screen and lights,
+    which zones are open, the partitions' states, a Contact ID report."""
+    if event_type == "action":
+        return {"action": event_name, "text": body}
+    if not (body.startswith("%") and body.endswith("$")):
+        return None
+    data = body[4:-1]
+    if event_type == "keypad":
+        partition, leds, numeric, beeps, text = data.split(",", 4)
+        leds, text = int(leds, 16), " ".join(text.split())
+        out = {"text": text, "status": alarm_status(leds, text), "partition": int(partition),
+               "lights": [name for bit, name in LEDS.items() if leds & (1 << bit)]}
+        if int(beeps, 16):
+            out["beeps"] = int(beeps, 16)
+        _, _, zone = evl_fields(body)
+        if zone:
+            out["zone"] = int(zone)
+        return out
+    if event_type == "zone_state":
+        return {"open_zones": bits(data)}
+    if event_type == "partition_state":
+        states = {str(i + 1): PARTITION_STATES.get(int(data[i * 2:i * 2 + 2], 16), data[i * 2:i * 2 + 2])
+                  for i in range(len(data) // 2) if data[i * 2:i * 2 + 2] != "00"}
+        return {"partitions": states}
+    if event_type == "cid":
+        # QXXXPPZZZ: qualifier (1 event or disarm, 3 restore or arm), event
+        # code, partition, then the zone or user number.
+        q, code = data[0], int(data[1:4])
+        return {"event": CID_EVENTS.get(code, f"code {code}"), "code": code,
+                "restore": q == "3", "partition": int(data[4:6]), "zone_or_user": int(data[6:9])}
+    if event_type == "zone_timers":
+        # Per zone, a little-endian UINT16: 0xFFFF while open, counting down
+        # one per 5 s since it was last faulted; 0 if not for a long while.
+        timers = {z + 1: int(data[z * 4 + 2:z * 4 + 4] + data[z * 4:z * 4 + 2], 16)
+                  for z in range(len(data) // 4)}
+        return {"open_zones": [z for z, t in timers.items() if t == 0xFFFF],
+                "faulted_s_ago": {str(z): (0xFFFF - t) * 5 for z, t in timers.items() if 0 < t < 0xFFFF}}
+    return None
+
+
 class LoginFailed(Exception):
     pass
 

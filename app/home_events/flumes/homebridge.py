@@ -77,6 +77,17 @@ def load_pairing(path=CONTROLLER):
                    d["accessory_id"], bytes.fromhex(d["accessory_ltpk"])), d["port"]
 
 
+PARSE_VERSION = 1
+
+
+def parse(event_type, event_name, body):
+    """A change -> its value; the accessory list -> how many accessories."""
+    msg = json.loads(body)
+    if event_type == "accessories":
+        return {"accessories": len(msg.get("accessories", []))}
+    return {"value": msg.get("value")}
+
+
 class Flume:
     def __init__(self, conn, pairing, port, host=HOST):
         self.conn, self.pairing, self.port, self.host = conn, pairing, port, host

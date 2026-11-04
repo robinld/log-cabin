@@ -68,6 +68,62 @@ def lennox_fields(msg):
             ",".join(sorted(data)) if isinstance(data, dict) and data else None)
 
 
+PARSE_VERSION = 1
+# Zone status fields worth reading, and their names in parsed. Temperatures
+# are the thermostat's °F; the °C copies are left out.
+ZONE_FIELDS = {"temperature": "temperature_f", "humidity": "humidity_pct",
+               "tempOperation": "operation", "humOperation": "humidity_operation",
+               "fan": "fan", "demand": "demand_pct", "aux": "aux_heat", "defrost": "defrost"}
+PERIOD_FIELDS = {"systemMode": "mode", "fanMode": "fan_mode", "hsp": "heat_setpoint_f",
+                 "csp": "cool_setpoint_f", "sp": "setpoint_f", "husp": "humidify_setpoint_pct",
+                 "desp": "dehumidify_setpoint_pct"}
+
+
+def epoch_iso(s):
+    """Lennox's seconds-since-epoch strings -> ISO-8601, or None."""
+    return db.iso(int(s) * 1000) if str(s or "").isdigit() else None
+
+
+def parse(event_type, event_name, body):
+    """A message -> per zone, temperature, humidity, setpoints and what the
+    system is doing; the alerts; and which sections the rest updated. Messages
+    can be partial: a zone carries only the fields that changed."""
+    data = json.loads(body).get("Data")
+    if not isinstance(data, dict):
+        return None
+    out = {"sections": sorted(data)}
+    zones = {}
+    for z in data.get("zones") or []:
+        st = z.get("status") or {}
+        period = st.get("period") or {}
+        f = {name: st[k] for k, name in ZONE_FIELDS.items() if k in st}
+        f.update({name: period[k] for k, name in PERIOD_FIELDS.items() if k in period})
+        if f:
+            zones[str(z.get("id"))] = f
+    if zones:
+        out["zones"] = zones
+    alerts = data.get("alerts")
+    if isinstance(alerts, dict):
+        meta = alerts.get("meta") or {}
+        if "numActiveAlerts" in meta:
+            out["active_alerts"] = meta["numActiveAlerts"]
+        out["alerts"] = [{"code": a.get("code"), "message": a.get("userMessage"),
+                          "priority": a.get("priority"), "active": a.get("isStillActive"),
+                          "first": epoch_iso(a.get("timestampFirst"))}
+                         for a in ((x.get("alert") or {}) for x in alerts.get("active") or []) if a]
+    clock = epoch_iso(((data.get("system") or {}).get("time") or {}).get("currentTime"))
+    if clock:
+        out["thermostat_time"] = clock
+    interfaces = data.get("interfaces")
+    if isinstance(interfaces, list) and interfaces:
+        # Info.status only: APDetails holds the Wi-Fi password.
+        status = (interfaces[0].get("Info") or {}).get("status") or {}
+        wifi = {k: status[k] for k in ("ssid", "ip", "rssi") if k in status}
+        if wifi:
+            out["wifi"] = wifi
+    return out
+
+
 def without_clocks(o):
     if isinstance(o, dict):
         return {k: without_clocks(v) for k, v in o.items() if k not in CLOCK_FIELDS}

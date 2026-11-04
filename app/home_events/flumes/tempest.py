@@ -53,6 +53,29 @@ def observed_ms(msg):
     return None
 
 
+PARSE_VERSION = 1
+# obs_st's obs array, by index (apidocs.tempestwx.com); the weather view uses the same.
+OBS_ST = {2: "wind_avg_ms", 3: "wind_gust_ms", 4: "wind_dir_deg", 6: "pressure_mb",
+          7: "air_temp_c", 8: "humidity_pct", 9: "illuminance_lux", 10: "uv", 11: "solar_w_m2",
+          12: "rain_mm", 14: "lightning_distance_km", 15: "lightning_strikes", 16: "battery_v"}
+
+
+def parse(event_type, event_name, body):
+    """An observation -> its readings by name; a strike -> its distance and energy."""
+    msg = json.loads(body)
+    if event_type == "stations":
+        return {"stations": len(msg.get("stations") or [])}
+    if event_type == "obs_st" and msg.get("obs"):
+        obs = msg["obs"][0]
+        return {name: obs[i] for i, name in OBS_ST.items() if i < len(obs) and obs[i] is not None}
+    evt = msg.get("evt") or []
+    if event_type == "evt_strike" and len(evt) >= 3:
+        return {"distance_km": evt[1], "energy": evt[2]}
+    if event_type == "evt_precip":
+        return {"rain_started": True}
+    return None
+
+
 class Flume:
     def __init__(self, conn, token):
         self.conn, self.token = conn, token

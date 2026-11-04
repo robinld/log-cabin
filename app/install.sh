@@ -45,6 +45,8 @@ chown -R root:root "$ROOT/app"
 systemctl stop home-events-yolink.service home-events-evl.service home-events-unifi.service home-events-lutron.service home-events-lennox.service \
   home-events-tempest.service home-events-emporia.service home-events-homebridge-flume.service 2>/dev/null || true
 sudo -u homeevents env DB_PATH="$DB_PATH" PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.db
+# Parse rows stored before their flume's parse() last changed (a raised PARSE_VERSION).
+sudo -u homeevents env DB_PATH="$DB_PATH" PYTHONPATH="$ROOT/app" "$VENV/bin/python" -m home_events.reparse
 
 # --- Homebridge (YoLink sensors in HomeKit) --------------------------------
 # Its packages live on /data: the root disk is too small for them. npm ci runs

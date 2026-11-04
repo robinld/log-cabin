@@ -13,6 +13,7 @@ outlet or charger endpoints, which change settings.
 """
 
 import datetime
+import json
 import logging
 import time
 
@@ -46,6 +47,25 @@ def usage_path(gids, until):
     return API_DEVICES_USAGE.format(deviceGids="+".join(map(str, gids)),
                                     instant=instant.strftime("%Y-%m-%dT%H:%M:%SZ"),
                                     scale=SCALE, unit="KilowattHours")
+
+
+PARSE_VERSION = 1
+
+
+def parse(event_type, event_name, body):
+    """A usage window -> kWh per circuit, by name (or channel number); the
+    device list -> how many devices."""
+    msg = json.loads(body)
+    if event_type == "devices":
+        return {"devices": len(device_gids(msg))}
+    if event_type != "usage":
+        return None
+    kwh = {}
+    for d in (msg.get("deviceListUsages") or {}).get("devices") or []:
+        for c in d.get("channelUsages") or []:
+            if c.get("usage") is not None:
+                kwh[c.get("name") or str(c.get("channelNum"))] = round(c["usage"], 4)
+    return {"kwh": kwh}
 
 
 def next_window_end(now):

@@ -36,6 +36,43 @@ def cef_fields(line):
     return parts[2] or "unknown", parts[5] or None
 
 
+PARSE_VERSION = 1
+# CEF extension values run to the next " key=", or the end; msg may be quoted.
+EXTENSION = re.compile(r'(\w+)=("[^"]*"|.*?)(?=\s\w+=|$)')
+# "Upper Doorbell has recorded a person." / "Upper Doorbell detected someone speaking."
+DETECTED = re.compile(r"^(?P<camera>.+?) (?:has recorded|detected) (?:an? )?(?P<what>.+?)\.?$")
+RINGING = re.compile(r"^Someone is ringing (?P<camera>.+?)\.?$")
+
+
+def parse(event_type, event_name, body):
+    """A CEF line -> its product, event, severity and key=value fields
+    (UniFi's own UNIFI prefix dropped), plus the camera and what it saw for
+    detections."""
+    i = body.find("CEF:")
+    if i < 0:
+        return {"message": body}
+    parts = re.split(r"(?<!\\)\|", body[i:], maxsplit=7)
+    if len(parts) < 8:
+        return None
+    out = {"product": parts[2], "version": parts[3], "event": parts[5]}
+    if parts[6].isdigit():
+        out["severity"] = int(parts[6])
+    for key, value in EXTENSION.findall(parts[7]):
+        key = key.removeprefix("UNIFI")
+        key = key[:1].lower() + key[1:]
+        out.setdefault(key, value[1:-1] if value.startswith('"') and value.endswith('"') else value)
+    if out.get("eventType") == out["event"]:
+        del out["eventType"]
+    if str(out.get("timestamp", "")).isdigit():
+        out["timestamp"] = db.iso(int(out["timestamp"]))
+    m = DETECTED.match(out.get("msg", "")) or RINGING.match(out.get("msg", ""))
+    if m:
+        out["camera"] = m["camera"]
+        if "what" in m.groupdict():
+            out["detected"] = m["what"]
+    return out
+
+
 def store(conn, line):
     line = OCTET_COUNT.sub("", line.strip())
     if not line:

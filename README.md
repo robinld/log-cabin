@@ -9,8 +9,10 @@ Aggregate logs across various IoT systems and query them.
 | Path | What |
 |---|---|
 | `infra/` | Terraform: instance, data volume + snapshot policy, SSM secrets |
-| `app/home_events/db.py` | One append-only `log` table (each message as received, plus `source`, `event_type`, `event_name`, `device_id` and `ts` columns) and the SQL views that interpret it |
-| `app/home_events/flumes/` | One **flume** per home system: each carries that system's messages into `log`, as received |
+| `app/home_events/db.py` | One append-only `log` table (each message as received, plus `source`, `event_type`, `event_name`, `device_id` and `ts` columns, and `parsed`) and the SQL views that interpret it |
+| `app/home_events/flumes/` | One **flume** per home system: each carries that system's messages into `log`, as received, and its `parse()` stores what each one means as JSON in `parsed` (battery, signal, temperature, which zones are open, which camera saw what) |
+| `app/home_events/parsing.py` | Calls each flume's `parse()` as rows are stored; a failure stores the row unparsed |
+| `app/home_events/reparse.py` | Re-parses rows made by an older `PARSE_VERSION`, or that failed; `install.sh` runs it on every deploy, so a better parser also improves old rows |
 | `app/home_events/flumes/yolink.py` | MQTT subscriber plus a periodic `getState` poll, so changes MQTT missed still show up |
 | `app/home_events/flumes/evl.py` | EnvisaLink (Honeywell alarm panel) TPI session over the WireGuard tunnel; stores every message raw; views derive zones, open intervals and troubles. Also sends four keypad actions (chime, arm stay, arm away, disarm) for the HomeKit bridge, from a server on `127.0.0.1:8002` that nothing publishes; only those four exist (no raw keys, so nothing can reach installer programming) |
 | `app/home_events/flumes/unifi.py` | Syslog listener (UDP and TCP, port 5514) for the UniFi console's SIEM Server integration; stores each CEF line raw |
@@ -57,7 +59,7 @@ terraform apply
 
 Run `scripts/dashboard.sh` and open http://localhost:8001 for Datasette. With the WireGuard tunnel up, it's also at `http://<box's VPN address>:8001` from the home LAN, with no login: anyone on that network can read the log.
 
-`/home` is a phone-sized status page: alarm state, doors, temperatures, water and feed health. Its **Live** tab (`/home#live`) streams new events one line each, newest first, with repeats left out.
+`/home` is a phone-sized status page: alarm state, doors, temperatures, water and feed health. Its **Live** tab (`/home#live`) streams new events one line each, newest first, with repeats left out. Tap a row for its parsed fields and a link to the whole row.
 
 **HomeKit** (optional, needs the WireGuard tunnel): the box runs a HomeKit bridge, "Log Cabin", on its WireGuard address. HomeKit only finds accessories by Bonjour on the same network, which doesn't cross the tunnel, so an always-on machine at home runs the LAN side of the relay: copy `app/home_events/mdns_relay.py` there (it needs only Python 3) and run `python3 mdns_relay.py lan <its LAN address> <box's WireGuard address>`. Set `homekit/relay_peer` to that machine's LAN address with `set-secrets.sh`. Then in the Home app, add an accessory and enter the setup code printed in `journalctl -u home-events-homekit` (it's paired once; the pairing lives in `/data/homekit.state`).
 

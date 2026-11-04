@@ -52,6 +52,40 @@ def lutron_fields(msg):
             url, f"{m.group(1)}/{m.group(2)}" if m else None)
 
 
+PARSE_VERSION = 1
+
+
+def parse(event_type, event_name, body):
+    """A LEAP message -> a zone's level, or what a definition or status list holds."""
+    msg = json.loads(body)
+    header, b = msg.get("Header") or {}, msg.get("Body") or {}
+    out = {}
+    if header.get("StatusCode") and not header["StatusCode"].startswith("200"):
+        out["status"] = header["StatusCode"]
+    z = b.get("ZoneStatus")
+    if z:
+        m = RESOURCE.match(z.get("href") or "")
+        if m:
+            out["zone"] = f"{m.group(1)}/{m.group(2)}"
+        for key, name in (("Level", "level_pct"), ("SwitchedLevel", "switched"),
+                          ("StatusAccuracy", "accuracy")):
+            if z.get(key) is not None:
+                out[name] = z[key]
+    if "PingResponse" in b:
+        out["leap_version"] = b["PingResponse"].get("LEAPVersion")
+    for key in ("Devices", "Areas", "Buttons", "OccupancyGroups"):
+        if isinstance(b.get(key), list):
+            out[key.lower()] = len(b[key])
+    if isinstance(b.get("OccupancyGroupStatuses"), list):
+        out["occupancy"] = {s["OccupancyGroup"]["href"].strip("/"): s.get("OccupancyStatus")
+                            for s in b["OccupancyGroupStatuses"] if s.get("OccupancyGroup")}
+    if isinstance(b.get("ButtonStatus"), dict):
+        bs = b["ButtonStatus"]
+        out["button"] = (bs.get("Button") or {}).get("href", "").strip("/")
+        out["button_event"] = (bs.get("ButtonEvent") or {}).get("EventType")
+    return out
+
+
 def tls_context(certs):
     """An SSL context from the paired certificate. ssl only loads keys from files."""
     with tempfile.TemporaryDirectory() as d:

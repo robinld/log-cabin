@@ -58,13 +58,18 @@
   .tabs button { flex: 1; border: 0; background: none; color: var(--text); font: inherit; font-size: 14px;
                  font-weight: 600; padding: 6px 0; border-radius: 7px; cursor: pointer; }
   .tabs button[aria-selected="true"] { background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
-  .ev { display: flex; align-items: baseline; gap: 8px; padding: 9px 12px; font-size: 15px; cursor: pointer; }
+  .ev { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; padding: 9px 10px; font-size: 15px; cursor: pointer; }
   .ev + .ev { border-top: 1px solid var(--line); }
   .ev .t { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
-  .ev .src { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+  .ev .src { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
              flex: none; width: 46px; overflow: hidden; color: var(--muted); }
   .ev .txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ev.open .txt { white-space: normal; }
+  .ev .details { display: none; flex-basis: 100%; margin: 4px 0 2px; font-size: 13px; cursor: auto;
+                 grid-template-columns: max-content 1fr; gap: 2px 12px; }
+  .ev.open .details { display: grid; }
+  .details dt { color: var(--muted); } .details dd { margin: 0; overflow-wrap: anywhere; }
+  .details a { grid-column: 1 / -1; color: var(--info); font-size: 12px; margin-top: 2px; }
   .ev.new { animation: flash 2s ease-out; }
   @keyframes flash { from { background: var(--info-bg); } to { background: transparent; } }
   .s-evl { color: var(--bad) !important; } .s-yolink { color: var(--ok) !important; }
@@ -245,7 +250,7 @@ async function render() {
 // --- Live: new events, one line each, newest first. Repeats are dropped: the
 // alarm panel keeps re-sending its keypad screens, YoLink sensors report the
 // same reading, and Lutron re-sends every level when it reconnects.
-const LIVE_SQL = `select id, received_at, source, event_type, event_name, device_id, body from log
+const LIVE_SQL = `select id, received_at, source, event_type, event_name, device_id, body, parsed from log
   where id > :since and (
     (source = 'evl' and event_type in ('keypad', 'zone_state', 'action'))
     or (source = 'yolink' and event_name in ('Report', 'Alert', 'StatusChange'))
@@ -256,7 +261,7 @@ const LIVE_SQL = `select id, received_at, source, event_type, event_name, device
     or (source = 'homebridge' and event_type in ('Outlet', 'Switch', 'Lightbulb') and event_name = 'On'))
   order by id limit 1000`;
 const LIVE_LABEL = {evl: "Alarm", yolink: "YoLink", unifi: "UniFi", lutron: "Lutron", lennox: "Lennox",
-                    homebridge: "Bridge"};  // the label column fits six letters
+                    homebridge: "HomeKit"};  // the label column fits about seven letters
 const LIVE_KEEP = 300;
 const live = {since: null, names: {}, last: {}, zones: null, lennox: {}, items: [], open: new Set()};
 
@@ -362,7 +367,7 @@ async function liveFetch() {
       try { s = summarize(row); } catch { s = null; }
       if (!s || (s.key && live.last[s.key] === s.text)) continue;
       if (s.key) live.last[s.key] = s.text;
-      fresh.push({id: row.id, t: row.received_at, src: row.source, text: s.text});
+      fresh.push({id: row.id, t: row.received_at, src: row.source, text: s.text, parsed: row.parsed});
     }
     if (rows.length < 1000) break;
   }
@@ -378,12 +383,38 @@ async function renderLive() {
   const isNew = new Set(first ? [] : fresh.map((i) => i.id));
   $("stream").innerHTML = live.items.map((i) => `<div class="ev${isNew.has(i.id) ? " new" : ""}${live.open.has(i.id) ? " open" : ""}" data-id="${i.id}">
     <span class="t">${esc(stamp(i.t))}</span><span class="src s-${esc(i.src)}">${esc(LIVE_LABEL[i.src] || i.src)}</span>
-    <span class="txt">${esc(i.text)}</span></div>`).join("") || `<div class="empty">Nothing yet</div>`;
+    <span class="txt">${esc(i.text)}</span>${details(i)}</div>`).join("") || `<div class="empty">Nothing yet</div>`;
 }
+
+// A row's parsed fields, as its flume's parse() stored them, and a link to the whole row.
+const UNITS = [["_s_ago", " (s ago)"], ["_c", " (°C)"], ["_f", " (°F)"], ["_pct", " (%)"], ["_dbm", " (dBm)"],
+               ["_km", " (km)"], ["_ms", " (m/s)"], ["_mb", " (mb)"], ["_v", " (V)"], ["_w_m2", " (W/m²)"]];
+function detailLabel(k) {
+  const unit = UNITS.find(([u]) => k.endsWith(u));
+  if (unit) k = k.slice(0, -unit[0].length);
+  return k.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase() + (unit ? unit[1] : "");
+}
+function detailRows(p, prefix = "") {
+  const out = [];
+  for (const [k, v] of Object.entries(p || {})) {
+    const label = prefix + detailLabel(k);
+    if (v && typeof v === "object" && !Array.isArray(v)) out.push(...detailRows(v, label + " · "));
+    else if (Array.isArray(v)) out.push([label, v.length ? v.map((x) => typeof x === "object" ? JSON.stringify(x) : x).join(", ") : "none"]);
+    else out.push([label, v]);
+  }
+  return out;
+}
+function details(i) {
+  let rows = [];
+  try { rows = detailRows(JSON.parse(i.parsed)); } catch { /* not parsed */ }
+  return `<dl class="details">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}
+    <a href="/events/log/${i.id}">Whole row</a></dl>`;
+}
+
 // Tap a row to see all of it.
 $("stream").addEventListener("click", (e) => {
   const row = e.target.closest(".ev");
-  if (!row) return;
+  if (!row || e.target.closest(".details")) return;
   const id = +row.dataset.id;
   live.open.has(id) ? live.open.delete(id) : live.open.add(id);
   row.classList.toggle("open", live.open.has(id));

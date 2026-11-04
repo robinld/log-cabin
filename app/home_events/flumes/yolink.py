@@ -41,6 +41,45 @@ MIN_BACKOFF_S, MAX_BACKOFF_S = 30, 300
 NO_STATE_TYPES = {"Hub", "SpeakerHub"}
 
 
+# --------------------------------------------------------------- parse --
+
+PARSE_VERSION = 1
+
+
+def parse(event_type, event_name, body):
+    """A stored YoLink message -> its state, battery, signal and readings."""
+    msg = json.loads(body)
+    if event_name == "getDeviceList":
+        return {"devices": len(msg.get("devices") or [])}
+    # MQTT reports carry the state in data, polls in state; a Switch's poll is the state itself.
+    d = next((msg[k] for k in ("data", "state") if isinstance(msg.get(k), dict)), msg)
+    out = {}
+    if isinstance(d.get("state"), str):
+        out["state"] = d["state"]
+    if "online" in msg:
+        out["online"] = msg["online"]
+    for key, name in (("temperature", "temperature_c"), ("humidity", "humidity_pct"),
+                      ("devTemperature", "device_temperature_c"), ("alertType", "alert_type"),
+                      ("sensorMode", "mode")):
+        if d.get(key) is not None:
+            out[name] = d[key]
+    # 0-4 bars; mains-powered devices report -1.
+    if isinstance(d.get("battery"), int) and d["battery"] >= 0:
+        out["battery"] = d["battery"]
+    alarms = {**(d.get("alarm") or {}), **(d.get("alarmState") or {})}
+    raised = sorted(k for k, v in alarms.items() if v is True)
+    if alarms:
+        out["alarms"] = raised
+    lora = d.get("loraInfo") or {}
+    if lora.get("signal") is not None:
+        out["signal_dbm"] = lora["signal"]
+    if lora.get("gateways") is not None:
+        out["gateways"] = lora["gateways"]
+    if d.get("stateChangedAt"):
+        out["state_changed_at"] = db.iso(d["stateChangedAt"])
+    return out
+
+
 class YoLinkError(Exception):
     pass
 
