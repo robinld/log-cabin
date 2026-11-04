@@ -81,7 +81,7 @@ Both run as a deploy-only IAM user (`terraform output deploy_user`), which can r
 ```bash
 KEY=$(aws iam create-access-key --user-name log-cabin-deploy --output json \
   --query '{Version: `1`, AccessKeyId: AccessKey.AccessKeyId, SecretAccessKey: AccessKey.SecretAccessKey}') \
-  && security add-generic-password -U -s log-cabin-deploy -a aws -w "$(echo $KEY)"; unset KEY
+  && security add-generic-password -U -s log-cabin-deploy -a aws -w "$(printf %s "$KEY" | tr -d ' \n')"; unset KEY
 ```
 
-and add the profile in `scripts/deploy.sh`'s header to `~/.aws/config`. To replace it, delete the old key afterwards with `aws iam delete-access-key --user-name log-cabin-deploy --access-key-id <old id>`.
+and add the profile in `scripts/deploy.sh`'s header to `~/.aws/config`. The key must be stored on one line: the Keychain returns a value with line breaks hex-encoded, which the CLI can't read. To replace it, delete the old key afterwards with `aws iam delete-access-key --user-name log-cabin-deploy --access-key-id <old id>`.
