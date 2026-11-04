@@ -14,3 +14,15 @@ output "secret_parameters" {
 output "data_volume_id" {
   value = aws_ebs_volume.data.id
 }
+
+output "deploy_user" {
+  value = aws_iam_user.deploy.name
+}
+
+output "deploy_document" {
+  value = aws_ssm_document.deploy.name
+}
+
+output "status_document" {
+  value = aws_ssm_document.status.name
+}

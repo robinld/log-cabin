@@ -74,4 +74,14 @@ The Homebridge flume logs what HomeKit is told. Once Homebridge is paired with H
 Tests: `pip install -r requirements-dev.txt`, then `python -m pytest tests` (Python 3.11, as on the box).
 
 To ship changes: push, publish a release (`gh release create vX.Y.Z --generate-notes`),
-then run `scripts/deploy.sh`. Pushing to `main` alone deploys nothing.
+then run `scripts/deploy.sh`; `scripts/status.sh` shows the services afterwards. Pushing to `main` alone deploys nothing.
+
+Both run as a deploy-only IAM user (`terraform output deploy_user`), which can run just those two fixed commands on the box and read their output. Its access key lives in the macOS Keychain, not in a file or Terraform state. After `terraform apply`, make it once (and again to replace it), signed in as an admin:
+
+```bash
+KEY=$(aws iam create-access-key --user-name log-cabin-deploy --output json \
+  --query '{Version: `1`, AccessKeyId: AccessKey.AccessKeyId, SecretAccessKey: AccessKey.SecretAccessKey}') \
+  && security add-generic-password -U -s log-cabin-deploy -a aws -w "$(echo $KEY)"; unset KEY
+```
+
+and add the profile in `scripts/deploy.sh`'s header to `~/.aws/config`. To replace it, delete the old key afterwards with `aws iam delete-access-key --user-name log-cabin-deploy --access-key-id <old id>`.

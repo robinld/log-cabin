@@ -303,3 +303,71 @@ resource "aws_dlm_lifecycle_policy" "data" {
     }
   }
 }
+
+# ----------------------------------------------------------------- deploy ---
+
+# Deploys run from the laptop as this user, whose one access key lives in the
+# macOS Keychain (see scripts/deploy.sh), not in state: it is made with the
+# CLI, after apply. It can run two fixed commands on the box and read their
+# output, nothing else: home-events-deploy installs the latest GitHub release,
+# home-events-status shows the services and their recent logs. Neither takes
+# parameters, so neither can be made to run anything else.
+resource "aws_ssm_document" "deploy" {
+  name          = "${var.name}-deploy"
+  document_type = "Command"
+  content = jsonencode({
+    schemaVersion = "2.2"
+    description   = "Install the latest GitHub release of ${var.github_repo}."
+    mainSteps = [{
+      action = "aws:runShellScript"
+      name   = "deploy"
+      inputs = { timeoutSeconds = "1200", runCommand = ["/usr/local/bin/home-events-update"] }
+    }]
+  })
+}
+
+resource "aws_ssm_document" "status" {
+  name          = "${var.name}-status"
+  document_type = "Command"
+  content = jsonencode({
+    schemaVersion = "2.2"
+    description   = "The home-events services and their last 15 minutes of logs."
+    mainSteps = [{
+      action = "aws:runShellScript"
+      name   = "status"
+      inputs = { runCommand = [
+        "systemctl --no-pager --all list-units 'home-events-*'",
+        "journalctl --no-pager -u 'home-events-*' --since -15min | tail -n 150",
+      ] }
+    }]
+  })
+}
+
+resource "aws_iam_user" "deploy" {
+  name = "${var.name}-deploy"
+}
+
+data "aws_iam_policy_document" "deploy" {
+  statement {
+    sid     = "RunDeployCommandsOnTheBox"
+    actions = ["ssm:SendCommand"]
+    resources = [
+      aws_instance.box.arn,
+      aws_ssm_document.deploy.arn,
+      aws_ssm_document.status.arn,
+    ]
+  }
+
+  # Reading a command's output can't be limited by resource.
+  statement {
+    sid       = "ReadCommandOutput"
+    actions   = ["ssm:GetCommandInvocation", "ssm:ListCommandInvocations"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_user_policy" "deploy" {
+  name   = "${var.name}-deploy"
+  user   = aws_iam_user.deploy.name
+  policy = data.aws_iam_policy_document.deploy.json
+}
