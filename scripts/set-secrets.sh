@@ -1,7 +1,8 @@
 #!/bin/bash
 # Prompt for each secret and store it in SSM Parameter Store. Values are read
 # without echo and never pass through Terraform state or shell history.
-# Usage: REGION=us-west-2 NAME=log-cabin scripts/set-secrets.sh
+# Usage: REGION=us-west-2 NAME=log-cabin scripts/set-secrets.sh [name ...]
+# With names (e.g. tempest/token), it asks for just those.
 set -euo pipefail
 REGION=${REGION:-us-west-2}
 NAME=${NAME:-log-cabin}
@@ -11,14 +12,17 @@ NAME=${NAME:-log-cabin}
 # homekit/relay_peer is the LAN address of the machine running the LAN side of
 # home_events/mdns_relay.py. tempest/token is a personal access token from the
 # Tempest web app; emporia/username and emporia/password are the Emporia app's.
-for p in yolink/uaid yolink/secret evl/host evl/password evl/user_code lutron/host lennox/host \
-         homekit/relay_peer tempest/token emporia/username emporia/password; do
+ALL="yolink/uaid yolink/secret evl/host evl/password evl/user_code lutron/host lennox/host
+     homekit/relay_peer tempest/token emporia/username emporia/password"
+for p in ${*:-$ALL}; do
   read -rsp "/$NAME/$p (blank to skip): " value; echo
   [ -z "$value" ] && continue
   aws ssm put-parameter --region "$REGION" --name "/$NAME/$p" --type SecureString \
     --value "$value" --overwrite >/dev/null
   echo "  set"
 done
+
+[ $# -gt 0 ] && exit 0  # named secrets only
 
 # The WireGuard client config is uploaded from its file. Its AllowedIPs is the
 # home addresses the box needs, or 0.0.0.0/0 to send all its IPv4 through the
