@@ -10,6 +10,13 @@ ACTIONS: a user code followed by one key, one key per ^03, each acknowledged
 before the next. Raw keys are never accepted, so nothing here
 can reach installer programming.
 
+After an alarm the panel holds it in memory, and the keypad shows "ALARM <zone>"
+until the code and Off are entered again. While it does, the keypad shows no
+FAULT screens, which is how the EVL tracks zones on a Honeywell panel, so zone
+changes stop. A disarm from HomeKit is the acknowledgement, so when the keypad
+then shows an alarm in memory, act() sends the code and Off once more to clear
+it. The code is held only until then.
+
 Actions come from a small HTTP server on 127.0.0.1:ACTION_PORT, for the
 HomeKit bridge on this box; nothing publishes it. The user code arrives with
 each request, the same as at a wall keypad, and is never stored or logged here.
@@ -47,6 +54,9 @@ ACTION_PORT = 8002
 ACTIONS = {"chime": "9", "stay": "3", "away": "2", "disarm": "1"}
 ACTION_LABELS = {"chime": "Chime toggled", "stay": "Arm stay", "away": "Arm away", "disarm": "Disarm"}
 ACTION_GAP_S = 3  # between the end of one action and the next
+# How long after a disarm to watch the keypad for an alarm in memory.
+MEMORY_WAIT_S = 10
+ALARM, ALARM_IN_MEMORY, ARMED = 0x0001, 0x0002, 0x8004  # keypad LED bits
 KEY_ACK_TIMEOUT_S = 3
 CODE = re.compile(r"[0-9]{4}")  # not \d, which matches other scripts' digits too
 
@@ -174,6 +184,8 @@ class Flume:
         self.last_action = 0  # when the last action finished
         self.action_lock = asyncio.Lock()  # one action's keys at a time
         self.key_ack = None  # future for the pending ^03's reply
+        self.keypad_updates = 0  # counts %00 lines, to tell a fresh screen from the last
+        self.clearing = None  # the task clearing alarm memory after a disarm
 
     def store(self, line):
         if line.startswith("^"):
@@ -189,6 +201,7 @@ class Flume:
             except (IndexError, ValueError):
                 pass
             else:
+                self.keypad_updates += 1
                 text = line[:-1].split(",", 5)[-1]
                 if text.startswith(ENTRY_DELAY):
                     self.entry_delay = True
@@ -272,7 +285,37 @@ class Flume:
         log.info("sent %s", action)  # never the code
         db.append(self.conn, source="evl", event_type="action", event_name=action,
                   body=f"{ACTION_LABELS[action]} from HomeKit")
+        if action == "disarm":
+            self.clearing = asyncio.create_task(self.clear_alarm_memory(code))
         return None
+
+    async def clear_alarm_memory(self, code):
+        """After a disarm: if the next keypad screens show the panel disarmed with an
+        alarm in memory, send the code and Off again, which clears it."""
+        writer, seen = self.writer, self.keypad_updates
+        deadline = time.monotonic() + MEMORY_WAIT_S
+        while True:
+            L = self.leds
+            if (self.keypad_updates != seen and L is not None
+                    and L & ALARM_IN_MEMORY and not L & (ALARM | ARMED)):
+                break
+            if time.monotonic() > deadline or self.writer is not writer:
+                return
+            await asyncio.sleep(0.25)
+        async with self.action_lock:
+            await asyncio.sleep(max(0, self.last_action + ACTION_GAP_S - time.time()))
+            if self.writer is not writer:
+                return
+            try:
+                err = await self.send_keys("clear alarm memory", code + ACTIONS["disarm"])
+            finally:
+                self.last_action = time.time()
+        if err:
+            log.warning("couldn't clear the alarm memory: %s", err)
+            return
+        log.info("cleared the alarm memory")
+        db.append(self.conn, source="evl", event_type="action", event_name="clear_alarm_memory",
+                  body="Alarm memory cleared after the disarm from HomeKit")
 
     async def send_keys(self, action, keys):
         writer = self.writer

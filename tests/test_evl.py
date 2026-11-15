@@ -184,3 +184,45 @@ def test_entry_delay_lasts_from_the_disarm_prompt_until_a_disarm_or_an_alarm(row
         f.store(f"%00,01,{screen}$")
         seen.append(f.status()["entry_delay"])
     assert seen == [False, True, True, False, True, False, False]
+
+
+def disarm_then(screens, monkeypatch, wait=0.5):
+    """Disarm, then have the keypad show these screens; returns the keys sent."""
+    monkeypatch.setattr(evl, "MEMORY_WAIT_S", wait)
+    monkeypatch.setattr(evl, "ACTION_GAP_S", 0)
+
+    async def go():
+        f = connected()
+        f.store("%00,01,800B,10,00,ALARM 10 FRONT  DOOR            $")  # before: in alarm
+        assert await f.act("disarm", "1234") is None
+        for line in screens:
+            await asyncio.sleep(0.05)
+            f.store(line)
+        await f.clearing
+        return f.writer.keys
+    return asyncio.run(go())
+
+
+def test_a_disarm_that_leaves_an_alarm_in_memory_clears_it(rows, monkeypatch):
+    keys = disarm_then(["%00,01,000A,10,00,ALARM 10 FRONT  DOOR            $"], monkeypatch)
+    assert keys == ["1", "2", "3", "4", "1"] * 2
+    assert [r["event_name"] for r in rows if r["event_type"] == "action"] == ["disarm", "clear_alarm_memory"]
+
+
+def test_a_disarm_without_an_alarm_in_memory_sends_nothing_more(rows, monkeypatch):
+    keys = disarm_then(["%00,01,1C08,08,00,****DISARMED****  Ready to Arm  $"], monkeypatch)
+    assert keys == ["1", "2", "3", "4", "1"]
+
+
+def test_only_a_screen_after_the_disarm_counts(rows, monkeypatch):
+    # The keypad already showed the memory, disarmed; the disarm itself cleared it
+    # and no new screen came, so the old one isn't taken as current.
+    monkeypatch.setattr(evl, "MEMORY_WAIT_S", 0.3)
+
+    async def go():
+        f = connected()
+        f.store("%00,01,000A,10,00,ALARM 10 FRONT  DOOR            $")
+        assert await f.act("disarm", "1234") is None
+        await f.clearing
+        return f.writer.keys
+    assert asyncio.run(go()) == ["1", "2", "3", "4", "1"]
